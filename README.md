@@ -80,6 +80,15 @@ To list available input devices, run:
 python main.py --list-devices
 ```
 
+## General Use
+
+Once everything is downloaded, use the following commands to run the project:
+```bash
+cd Meeting_agents
+source .venv/bin/activate
+python gui.py
+```
+
 ## How to use
 
 1. Start the app with `python gui.py`.
