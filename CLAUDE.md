@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Real-time, local, free STT for Zoom meetings / online lectures. Captures audio, transcribes with Whisper, writes `.txt` live, and can summarize into meeting minutes via a local LLM (Ollama). Korean/English auto-detect. macOS-focused. UI and code comments are in English.
+Real-time, local, free STT for Zoom meetings / online lectures. Captures audio, transcribes with Whisper, writes `.txt` live, translates transcripts, and can summarize into meeting minutes via a local LLM (Ollama). Korean/English/Chinese auto-detect. macOS-focused. UI and code comments are in English.
 
 ## Commands
 
@@ -22,7 +22,7 @@ python gui.py                              # GUI (recommended) — tkinter/custo
 python main.py                             # CLI — captions to terminal, Ctrl+C saves txt
 python main.py --list-devices              # list input devices (fix config.SOURCES names)
 
-# Minutes feature (optional, local LLM)
+# Translation/minutes features (optional, local LLM)
 brew install ollama && ollama serve        # keep running in a separate terminal
 ollama pull qwen2.5:7b                      # model set in config.OLLAMA_MODEL
 ```
@@ -47,7 +47,7 @@ Audio flows through a threaded producer/consumer pipeline, shared by both `main.
 2. **`vad_buffer.py`** (`VADBuffer`, one per speaker) — consumer side. `webrtcvad` splits the block stream into utterance chunks on silence gaps (`VAD_SILENCE_SEC`), drops sub-`MIN_CHUNK_SEC` noise, force-splits at `MAX_CHUNK_SEC`.
 3. **`transcriber.py`** (`Transcriber`) — chunk → `(lang, text)`. Two backends selected by `config.STT_BACKEND`: `"mlx"` (Apple GPU via `mlx-whisper`) or `"faster-whisper"` (CPU). Three anti-hallucination gates: RMS volume floor (`MIN_RMS`) skips STT entirely, boilerplate-phrase match (`HALLUCINATION_PHRASES`), and repetition-loop detection.
 4. **`writer.py`** (`Writer`) — appends each utterance to `transcripts/transcript_*.txt` with immediate `flush()` + `os.fsync()` so nothing is lost on crash/force-quit. Optional `on_line` callback feeds the GUI.
-5. **`minutes.py`** — separate, on-demand stage. Streams the full transcript to Ollama's HTTP API (`urllib`, no extra deps) and returns markdown minutes.
+5. **`translator.py` / `minutes.py`** — separate, on-demand stages. They stream the full transcript to Ollama's HTTP API (`urllib`, no extra deps) and return translated transcript text or markdown minutes.
 
 `main.py` `consume_loop` and `gui.py` `STTController._run` are two implementations of the same loop; keep pipeline changes in sync across both.
 
@@ -57,9 +57,10 @@ Audio flows through a threaded producer/consumer pipeline, shared by both `main.
 |-------|--------------|---------------|--------|
 | STT | `large-v3-turbo` (Whisper) | mlx-whisper → repo `mlx-community/whisper-large-v3-turbo` (Apple GPU) | `config.MODEL_SIZE`, `config.STT_BACKEND`, `config.MLX_MODEL_MAP` |
 | STT (CPU fallback) | same size | faster-whisper, `int8`, `beam_size=1` | `config.DEVICE`, `config.COMPUTE_TYPE`, `config.BEAM_SIZE` |
+| Translation | `qwen2.5:7b` | Ollama local LLM, HTTP `localhost:11434`, streaming, `temperature=0.1`, `num_ctx=8192` | `config.OLLAMA_MODEL`, `config.OLLAMA_URL`, `config.OLLAMA_NUM_CTX` |
 | Minutes | `qwen2.5:7b` | Ollama local LLM, HTTP `localhost:11434`, streaming, `temperature=0.2`, `num_ctx=8192` | `config.OLLAMA_MODEL`, `config.OLLAMA_URL`, `config.OLLAMA_NUM_CTX` |
 
-STT model sizes: `base` / `small` / `medium` / `large-v3-turbo` / `large-v3`. Language `config.LANGUAGE=None` = ko/en auto-detect. Minutes prompt is a hardcoded template in `minutes.py` (`PROMPT_TEMPLATE`) that instructs the LLM to write minutes in the **same language as the transcript** — sections Summary / Discussion / Decisions / Action Items, using `[Me]`/`[Others]` speaker tags to attribute.
+STT model sizes: `base` / `small` / `medium` / `large-v3-turbo` / `large-v3`. Language `config.LANGUAGE=None` = auto-detect; pin to `ko`, `en`, or `zh` for Korean, English, or Chinese. Translation prompt is a hardcoded template in `translator.py` (`PROMPT_TEMPLATE`) and preserves timestamps plus speaker tags. Minutes prompt is a hardcoded template in `minutes.py` (`PROMPT_TEMPLATE`) that instructs the LLM to write minutes in the **same language as the transcript** — sections Summary / Discussion / Decisions / Action Items, using `[Me]`/`[Others]` speaker tags to attribute.
 
 ## Functions by module
 
@@ -81,11 +82,13 @@ STT model sizes: `base` / `small` / `medium` / `large-v3-turbo` / `large-v3`. La
 
 **`writer.py`** — `Writer(on_line, echo, started_at)`: `_ensure_file` (append if same `started_at` = resume, else header), `emit(lang, text, speaker)` (print + fsync line), `save_txt()`, `close()`.
 
+**`translator.py`** — `TARGET_LANGUAGES`, `is_available()` (Ollama `/api/tags` ping), `translate_transcript(transcript, target_language, on_token)` (streams `/api/generate`, raises `RuntimeError` on connection failure).
+
 **`minutes.py`** — `is_available()` (Ollama `/api/tags` ping), `generate_minutes(transcript, when, on_token)` (streams `/api/generate`, raises `RuntimeError` on connection failure).
 
 **`main.py`** — `consume_loop(capture, stt, out, stop_event)` (CLI pipeline loop), `main()` (wires threads, Ctrl+C → save).
 
-**`gui.py`** — `STTController` runs the pipeline in a worker thread, passes lines to GUI via `line_queue`; `request_model()` triggers no-drop hot model swap. `App` builds customtkinter UI (3 tabs: Live STT / Live Summary / Minutes), `_poll_queue` drains queues onto the UI, `_update_live_summary` merges consecutive same-speaker turns (no LLM).
+**`gui.py`** — `STTController` runs the pipeline in a worker thread, passes lines to GUI via `line_queue`; `request_model()` triggers no-drop hot model swap. `App` builds customtkinter UI (4 tabs: Live STT / Live Summary / Translator / Minutes), `_poll_queue` drains queues onto the UI, `_update_live_summary` merges consecutive same-speaker turns (no LLM).
 
 ## Configuration
 

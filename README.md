@@ -1,93 +1,158 @@
-# Live STT (real-time, local, free)
+# meeting agents
 
-Transcribe Zoom meetings / online lecture audio in real time and save it to `.txt`.
-Korean/English auto-detect. **Speaker separation** (Me / Others) + local-LLM meeting minutes.
-macOS-focused, runs entirely on your machine — no cloud, no cost.
+meeting agents is a local meeting assistant that shows real-time STT captions, provides a live summary while the meeting is still in progress, translates the full transcript, and generates meeting minutes after the session.
 
-## How speaker separation works
+It captures both the audio playing on your Mac, such as Zoom, Google Meet, or online lectures, and your microphone. The transcript is separated into `[Others]` and `[Me]`, and STT output is automatically saved under `transcripts/`.
 
-No diarization. Each speaker is a *separate audio source*:
-- **Others** (meeting/lecture audio) = the whole **system output**, captured directly via a **ScreenCaptureKit sidecar** (`native/sysaudio`). No virtual audio device needed — just grant Screen Recording permission once. This is the default.
-- **Me** = the physical **microphone**, captured directly.
-
-The two sources are tagged separately -> 100% accurate speaker attribution without any ML.
-Device/speaker mapping lives in `SOURCES` in [config.py](config.py).
-
-> **BlackHole is a fallback, not the default.** The old routing (Others = BlackHole 2ch via a Multi-Output Device) still works — see [docs/system-audio-capture.md](docs/system-audio-capture.md).
-
-## Layout
-
-```
-config.py         # all settings
-audio_capture.py  # capture -> queue (producers: mic + system-audio sidecar)
-vad_buffer.py     # split the block stream into utterance chunks on silence
-transcriber.py    # Whisper wrapper (mlx / faster-whisper)
-writer.py         # output (terminal/GUI) + real-time txt saving
-minutes.py        # minutes generation (local LLM: Ollama)
-main.py           # CLI, Ctrl+C handling
-gui.py            # GUI — tabs (Live STT / Live Summary / Minutes) (customtkinter)
-native/sysaudio.swift  # ScreenCaptureKit system-audio sidecar
-```
+Korean version: [README_KO.md](README_KO.md)
 
 ## Install
 
-```bash
-brew install portaudio                     # sounddevice needs PortAudio
-python3 -m venv .venv && source .venv/bin/activate
-pip install --upgrade pip
-pip install -r requirements.txt
-pip install mlx-whisper                     # default backend (Apple GPU); skip if using faster-whisper
+Move into the project folder first.
 
-# Build the system-audio sidecar (default "Others" capture — no BlackHole needed)
-bash native/build.sh                        # needs Xcode command-line tools (swiftc), macOS 13+, arm64
+```bash
+cd Meeting_agents
 ```
 
-> The default `STT_BACKEND="mlx"` needs `mlx-whisper` (Apple silicon). On other hardware set `STT_BACKEND="faster-whisper"` in [config.py](config.py) — that backend is already in `requirements.txt`.
-> Models auto-download on first run (hundreds of MB).
+Install PortAudio for audio input.
 
-## Usage
+```bash
+brew install portaudio
+```
 
-### GUI (recommended)
+Create a Python virtual environment and install the required packages.
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+On Apple Silicon Macs, the default `mlx` STT backend is the fastest option.
+
+```bash
+pip install mlx-whisper
+```
+
+Build the native sidecar used for system audio capture.
+
+```bash
+bash native/build.sh
+```
+
+This requires macOS 13 or later and Xcode Command Line Tools with `swiftc`. On the first run, macOS may ask for Screen Recording permission. Allow it, then restart the app.
+
+## Install Ollama for translation and meeting minutes
+
+Ollama is optional if you only need STT. It is required for transcript translation and meeting minutes with a local LLM.
+
+```bash
+brew install ollama
+ollama serve
+```
+
+Open another terminal and pull the model.
+
+```bash
+ollama pull qwen2.5:7b
+```
+
+For a lighter model, you can use `qwen2.5:3b`. Change the model name in `OLLAMA_MODEL` in [config.py](config.py).
+
+## Run
+
+The GUI is the recommended way to use meeting agents.
+
 ```bash
 python gui.py
 ```
-On first launch, macOS asks for **Screen Recording** permission (needed to capture system audio) — allow it, then restart the app.
 
-Three tabs:
-- **🎙 Live STT**: ▶ Start / ■ Stop / 🆕 New session, model & language selection. Captions scroll live, colored per speaker. **Every utterance is auto-saved to txt** (nothing is lost even if the app crashes).
-- **⚡ Live Summary**: live per-speaker accumulation, no LLM.
-- **📝 Minutes**: press **✨ Generate** and a local LLM turns the transcript into clean minutes -> **💾 Save** (`minutes_*.md`).
+You can also run the CLI version from the terminal.
 
-`🆕 New session` = clear the screen + start a new file (for the next meeting).
-
-#### Minutes feature = needs a local LLM (Ollama) (one-time install)
 ```bash
-brew install ollama
-ollama serve                 # keep running in a separate terminal
-ollama pull qwen2.5:7b       # good multilingual model (~4.7GB). Use qwen2.5:3b for something lighter.
+python main.py
 ```
-- Fully free, local, offline (meeting content is never sent anywhere)
-- Change the model via `OLLAMA_MODEL` in [config.py](config.py)
-- If you only need STT, Ollama is optional (only the Minutes tab is disabled without it)
-- Minutes are written in the same language as the transcript (Korean audio -> Korean minutes, English -> English)
 
-### CLI
+To list available input devices, run:
+
 ```bash
-python main.py                 # run, captions in the terminal
-python main.py --list-devices  # list input devices
+python main.py --list-devices
 ```
-- Play Zoom / a lecture -> live captions
-- `Ctrl+C` -> saves `transcripts/transcript_*.txt`
 
-If a device name differs from the list, match the `device` value in `SOURCES` in [config.py](config.py).
-To capture only the other party (no mic), delete the microphone line in `SOURCES`.
+## How to use
 
-## Tuning (config.py)
+1. Start the app with `python gui.py`.
+2. Select the STT model and language from the top bar.
+   - `Auto`: auto-detect Korean, English, or Chinese
+   - `Korean`: force Korean
+   - `English`: force English
+   - `Chinese`: force Chinese
+3. Press `Start` to begin audio capture and transcription.
+4. During the meeting, live captions appear on screen and each utterance is saved automatically to a `.txt` file.
+5. Use the `Live Summary` tab to see consecutive turns grouped by speaker in real time.
+6. Press `Stop` when the meeting ends.
+7. In the `Translator` tab, choose Korean, English, or Chinese and press `Translate` to translate the full transcript.
+8. Save the generated translation as a `translation_*.md` Markdown file.
+9. In the `Minutes` tab, press `Generate` to let Ollama turn the full transcript into meeting minutes.
+10. Save the generated minutes as a `minutes_*.md` Markdown file.
 
-| Symptom | What to change |
-|------|--------|
-| Transcription lags | `MODEL_SIZE="base"`, `BEAM_SIZE=1`, lower `MAX_CHUNK_SEC` |
-| Short phrases get the wrong language | raise `VAD_SILENCE_SEC` |
-| Phantom text on silence | raise `VAD_AGGRESSIVENESS` / raise `MIN_RMS` |
-| Single-language lecture | `LANGUAGE="ko"` or `"en"` |
-| Prefer accuracy | `MODEL_SIZE="medium"` or `"large-v3-turbo"` |
+Use `New` to clear the current screen and start a fresh transcript file for the next meeting.
+
+## How it works
+
+meeting agents captures two audio sources at the same time.
+
+- `Others`: system audio playing on your Mac, such as Zoom, Meet, lecture videos, or browser audio.
+- `Me`: your physical microphone input.
+
+Captured audio is pushed into a queue in short blocks. `VADBuffer` splits those blocks into utterances based on silence. Each utterance is passed to a Whisper-based STT backend, converted into text, shown immediately in the app, and saved to the transcript file.
+
+Translation and meeting minutes are generated by sending the full transcript to a local Ollama LLM. No external API is used in the default setup, so meeting content stays on your machine.
+
+## Configuration
+
+Main settings live in [config.py](config.py).
+
+| Goal | Change |
+| --- | --- |
+| Faster transcription | `MODEL_SIZE="base"` or `"small"` |
+| Higher accuracy | `MODEL_SIZE="medium"` or `"large-v3-turbo"` |
+| Korean only | `LANGUAGE="ko"` |
+| English only | `LANGUAGE="en"` |
+| Chinese only | `LANGUAGE="zh"` |
+| Auto language detection | `LANGUAGE=None` |
+| Short phrases are cut off | Increase `VAD_SILENCE_SEC` slightly |
+| Quiet speech is missed | Lower `MIN_RMS` |
+| Noise becomes phantom text | Increase `MIN_RMS` or `VAD_AGGRESSIVENESS` |
+| Change the minutes model | Change `OLLAMA_MODEL` |
+
+If your microphone device name is different, check it with `python main.py --list-devices`, then update the `device` value in `SOURCES` in [config.py](config.py).
+
+```python
+SOURCES = [
+    {"kind": "system", "speaker": "Others"},
+    {"device": "MacBook Pro Microphone", "speaker": "Me"},
+]
+```
+
+To capture only the other party or lecture audio, remove the microphone line.
+
+## Generated files
+
+Real-time STT output is saved as `transcripts/transcript_*.txt`. When you save generated translations or meeting minutes from the GUI, they are written as `translation_*.md` and `minutes_*.md`.
+
+## File guide
+
+- [config.py](config.py): STT model, language, audio sources, VAD, output path, and Ollama model settings
+- [gui.py](gui.py): GUI app for live STT, live summary, translation, and meeting minutes
+- [main.py](main.py): CLI entry point for transcription and device listing
+- [audio_capture.py](audio_capture.py): Captures microphone and system audio, then sends blocks to the processing queue
+- [vad_buffer.py](vad_buffer.py): Splits audio blocks into utterances based on silence
+- [transcriber.py](transcriber.py): Wraps the Whisper backend and performs STT
+- [writer.py](writer.py): Sends STT output to the terminal/GUI and saves transcript files
+- [minutes.py](minutes.py): Calls the local Ollama LLM to convert transcripts into meeting minutes
+- [translator.py](translator.py): Calls the local Ollama LLM to translate transcripts
+- [native/sysaudio.swift](native/sysaudio.swift): macOS ScreenCaptureKit sidecar for system audio capture
+- [native/build.sh](native/build.sh): Build script for the system audio sidecar
+- [requirements.txt](requirements.txt): Python dependency list

@@ -1,8 +1,11 @@
+.venv
 .venv/
 __pycache__/
 transcripts/
 native/sysaudio
 .omc/
+.DS_Store
+CLAUDE.md
 
 # Dev-only docs (audio-routing setup notes + historical spec) — kept locally, not shipped.
 # Only docs/run-guide.md is user-facing and published.
