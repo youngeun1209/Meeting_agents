@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+transcripts/
+native/sysaudio
+.omc/
+
+# Dev-only docs (audio-routing setup notes + historical spec) — kept locally, not shipped.
+# Only docs/run-guide.md is user-facing and published.
+docs/system-audio-capture.md
+docs/multi-output-setup.md
+docs/ladiocast-setup.md
+docs/design-spec.md

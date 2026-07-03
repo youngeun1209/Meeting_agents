@@ -1,0 +1,6 @@
+faster-whisper>=1.0.0
+sounddevice>=0.4.6
+numpy>=1.24
+webrtcvad>=2.0.10
+setuptools<81          # webrtcvad needs pkg_resources (old setuptools API)
+customtkinter>=6.0
