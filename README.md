@@ -1,4 +1,4 @@
-# meeting agents
+# Meeting Agents
 
 meeting agents is a local meeting assistant that shows real-time STT captions, provides a live summary while the meeting is still in progress, translates the full transcript, and generates meeting minutes after the session.
 
