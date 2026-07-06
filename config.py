@@ -22,7 +22,7 @@ MLX_MODEL_MAP = {
 }
 
 # --- Language ---
-# None = auto-detect (Korean/English). Can also pin to "ko" or "en".
+# None = auto-detect. Can also pin to "ko", "en", or "zh".
 LANGUAGE = None
 
 # --- Audio input ---
@@ -56,8 +56,11 @@ MIN_CHUNK_SEC = 0.4        # utterances shorter than this are dropped (noise)
 MAX_CHUNK_SEC = 12         # force-split long utterances. Longer = more context/accuracy, but long monologues lag more.
 
 # If chunk RMS (volume) is below this, skip STT -> blocks silence/noise hallucinations at the source.
-# Lower catches quiet speech better (higher hallucination risk). Lower it (0.003) if speech is being missed.
-MIN_RMS = 0.005
+# This is the ONLY reliable gate: on near-silent mic noise Whisper hallucinates "Thank you"/"I love that"
+# with no_speech_prob=0.0 and good logprob (it is *confident* in the garbage) -> confidence gates don't help.
+# Measured silent-mic room noise ~0.006 RMS, so 0.005 let it through. 0.015 gates it; real speech is 0.02-0.1.
+# Raise if hallucinations persist; lower (0.008) if quiet speech is being dropped.
+MIN_RMS = 0.015
 
 # --- Output / saving ---
 OUTPUT_DIR = "transcripts"   # folder for .txt files

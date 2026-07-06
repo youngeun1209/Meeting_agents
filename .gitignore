@@ -3,6 +3,7 @@
 __pycache__/
 transcripts/
 native/sysaudio
+.setup_done
 .omc/
 .DS_Store
 CLAUDE.md

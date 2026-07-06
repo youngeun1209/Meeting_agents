@@ -2,6 +2,10 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Conversation language
+
+Converse with the user in **Korean** (한국어). Keep code, comments, identifiers, and commit messages in English as the codebase already does.
+
 ## What this is
 
 Real-time, local, free STT for Zoom meetings / online lectures. Captures audio, transcribes with Whisper, writes `.txt` live, translates transcripts, and can summarize into meeting minutes via a local LLM (Ollama). Korean/English/Chinese auto-detect. macOS-focused. UI and code comments are in English.
@@ -41,7 +45,7 @@ Diarization is avoided entirely. Instead, each speaker is a *separate audio sour
 
 ## Pipeline architecture (producer → consumer)
 
-Audio flows through a threaded producer/consumer pipeline, shared by both `main.py` (CLI) and `gui.py` (GUI wraps the same stages in `STTController`):
+Audio flows through a threaded producer/consumer pipeline. The pipeline lives in **one place** — `main.STTEngine` — and both entrypoints run it: `main.py` (CLI) and `gui.py` (GUI). There is no duplicated loop.
 
 1. **`audio_capture.py`** (`MultiCapture`) — producer threads. Two source kinds feed one shared `audio_queue` as `(speaker, mono_block)`: (a) `sounddevice` device callbacks (mic), (b) `SystemAudioCapture` — a subprocess running the `native/sysaudio` ScreenCaptureKit sidecar, whose 16kHz-mono-int16 stdout is read, converted to float32, and tagged. Stereo/multichannel is averaged to mono; 16kHz throughout.
 2. **`vad_buffer.py`** (`VADBuffer`, one per speaker) — consumer side. `webrtcvad` splits the block stream into utterance chunks on silence gaps (`VAD_SILENCE_SEC`), drops sub-`MIN_CHUNK_SEC` noise, force-splits at `MAX_CHUNK_SEC`.
@@ -49,7 +53,7 @@ Audio flows through a threaded producer/consumer pipeline, shared by both `main.
 4. **`writer.py`** (`Writer`) — appends each utterance to `transcripts/transcript_*.txt` with immediate `flush()` + `os.fsync()` so nothing is lost on crash/force-quit. Optional `on_line` callback feeds the GUI.
 5. **`translator.py` / `minutes.py`** — separate, on-demand stages. They stream the full transcript to Ollama's HTTP API (`urllib`, no extra deps) and return translated transcript text or markdown minutes.
 
-`main.py` `consume_loop` and `gui.py` `STTController._run` are two implementations of the same loop; keep pipeline changes in sync across both.
+Pipeline changes go in `main.STTEngine.run` only — both entrypoints inherit them. `main()` is a thin CLI (worker thread + Ctrl+C → save); `gui.STTController` is a thin adapter that constructs an `STTEngine` with `on_line`/`on_status` callbacks feeding a queue the UI drains.
 
 ## Models in use
 
@@ -64,31 +68,96 @@ STT model sizes: `base` / `small` / `medium` / `large-v3-turbo` / `large-v3`. La
 
 ## Functions by module
 
-**`audio_capture.py`**
-- `find_device(name_substr)` → `(idx, dev)` by substring, input channels > 0.
-- `list_input_devices()` — prints capturable devices (`--list-devices` / GUI "Devices").
-- `AudioCapture` — single-device capture (legacy, unused by pipeline). `_callback`, `start`, `stop`.
-- `SystemAudioCapture(audio_queue, speaker, binary=None)` — spawns `native/sysaudio` (raises if not built), reader thread slices its stdout int16 PCM into `BLOCK_SEC` blocks → float32 → `(speaker, block)`; `_stderr_relay` surfaces sidecar `[sysaudio]` logs (format/permission); `stop()` terminates the subprocess.
-- `MultiCapture(sources)` — **the one in use.** Handles both source kinds: `{"kind":"system"}` → a `SystemAudioCapture`; `{"device":...}` → a `sounddevice` stream. `_make_callback(speaker)` tags device blocks; `start()` opens all sources (warns on missing devices, raises if none opened); `speakers()` lists active labels; `stop()` closes streams and sidecars.
+Every `.py` file, every function. Pipeline order: `audio_capture` → `vad_buffer` → `transcriber` → `writer`; `translator`/`minutes` are on-demand; `main` holds the engine, `gui` the UI.
 
-**`vad_buffer.py`**
-- `_float32_to_pcm16(audio)` — float32 → int16 PCM bytes (webrtcvad needs 16-bit).
-- `VADBuffer` — one per speaker. `add(block)` → list of finished chunks; `_flush()` finalizes current utterance (None if < `MIN_CHUNK_SEC`); `_speech_len`, `_reset_speech`; `finalize()` returns trailing utterance on shutdown.
+**`audio_capture.py`** — producer side (audio → shared `audio_queue`).
+- `find_device(name_substr)` → `(idx, dev)`. First input device (channels > 0) whose name contains the substring; `(None, None)` if none.
+- `list_input_devices()` — prints every capturable input device with index/channels/samplerate (`--list-devices` / GUI "Devices").
+- `AudioCapture` — single-device `sounddevice` capture. **Legacy, unused by the pipeline.**
+  - `__init__()` — own `audio_queue`, no stream yet.
+  - `_callback(indata, frames, time_info, status)` — averages stereo→mono, puts the block on the queue.
+  - `start()` — resolves `config.INPUT_DEVICE`, opens the stream (raises if device missing).
+  - `stop()` — stops + closes the stream.
+- `SystemAudioCapture(audio_queue, speaker="Others", binary=None)` — whole system audio via the `native/sysaudio` ScreenCaptureKit sidecar.
+  - `start()` — raises if the sidecar binary isn't built; spawns it, launches reader + stderr threads.
+  - `_reader()` — slices the sidecar's 16kHz int16 stdout into `BLOCK_SEC` blocks → float32 → `(speaker, block)` onto the queue.
+  - `_stderr_relay()` — surfaces sidecar `[sysaudio]` logs (format/permission diagnostics).
+  - `stop()` — sets the stop flag, terminates (then kills) the subprocess.
+- `MultiCapture(sources)` — **the one in use.** One producer per source, all feeding one queue.
+  - `__init__(sources)` — holds the source list, shared `audio_queue`, stream/sidecar/active lists.
+  - `_make_callback(speaker)` — returns a `sounddevice` callback that tags device blocks with the speaker.
+  - `start()` — `{"kind":"system"}` → `SystemAudioCapture`; `{"device":...}` → a `sounddevice` stream. Warns on missing devices, raises if none opened.
+  - `speakers()` → list of active speaker labels.
+  - `stop()` — closes all streams and stops all sidecars.
 
-**`transcriber.py`**
-- `_normalize(text)`, `is_hallucination(text)`, `is_repetitive(text)` — text-side hallucination gates (boilerplate match + low unique-word-ratio loop detection).
-- `rms(audio)` — volume, for the `MIN_RMS` gate.
-- `Transcriber` — `__init__` picks backend; `_init_mlx`/`_transcribe_mlx`, `_init_faster_whisper`/`_transcribe_faster_whisper`; public `transcribe(audio)` → `(lang, text)` runs RMS gate → backend → text gates. Both backends use `condition_on_previous_text=False`, `no_speech_threshold=0.6`.
+**`vad_buffer.py`** — consumer side, one `VADBuffer` per speaker.
+- `_float32_to_pcm16(audio)` — float32 [-1,1] → int16 PCM bytes (webrtcvad needs 16-bit).
+- `VADBuffer`
+  - `__init__()` — builds the `webrtcvad.Vad`, derives frame/silence/min/max sample counts from `config`.
+  - `add(block)` → list of finished utterance chunks. Frames the block, marks speech/silence, ends an utterance on `VAD_SILENCE_SEC` of silence, force-splits at `MAX_CHUNK_SEC`.
+  - `_speech_len()` — current accumulated utterance length in samples.
+  - `_flush()` — finalizes the current utterance to a chunk; `None` if shorter than `MIN_CHUNK_SEC`.
+  - `_reset_speech()` — clears the utterance accumulator + silence counter.
+  - `finalize()` — on shutdown, returns the trailing utterance (`None` if none).
 
-**`writer.py`** — `Writer(on_line, echo, started_at)`: `_ensure_file` (append if same `started_at` = resume, else header), `emit(lang, text, speaker)` (print + fsync line), `save_txt()`, `close()`.
+**`transcriber.py`** — chunk → `(lang, text)` with anti-hallucination gates.
+- `_normalize(text)` — strip punctuation/whitespace, lowercase (for phrase matching).
+- `is_hallucination(text)` — True if the whole chunk exactly matches a boilerplate phrase (`HALLUCINATION_PHRASES`) or contains all keywords of any `HALLUCINATION_KEYWORD_SETS` combo (YouTube-outro residue).
+- `is_repetitive(text)` — True if unique-word ratio < 0.35 (hallucination loop).
+- `rms(audio_float32)` — block volume, for the `MIN_RMS` gate.
+- `Transcriber`
+  - `__init__()` — picks backend from `config.STT_BACKEND`.
+  - `_init_mlx()` — lazy-imports `mlx_whisper`, resolves the repo from `MLX_MODEL_MAP`, warms up with a silent block (front-loads download).
+  - `_transcribe_mlx(audio)` → `(lang, text)`.
+  - `_init_faster_whisper()` — lazy-imports + loads `WhisperModel` (CPU).
+  - `_transcribe_faster_whisper(audio)` → `(lang, text)`.
+  - `transcribe(audio)` → `(lang, text)`. RMS gate → backend → text gates (empty text if gated). Both backends use `condition_on_previous_text=False`, `no_speech_threshold=0.6`.
 
-**`translator.py`** — `TARGET_LANGUAGES`, `is_available()` (Ollama `/api/tags` ping), `translate_transcript(transcript, target_language, on_token)` (streams `/api/generate`, raises `RuntimeError` on connection failure).
+**`writer.py`** — output + crash-safe live saving.
+- `Writer(on_line=None, echo=True, started_at=None)`
+  - `_ensure_file()` — opens the file on the first utterance; appends if the same `started_at` file exists (resume), else writes a header.
+  - `emit(lang, text, speaker=None)` — formats one line; echoes to terminal if `echo`; appends + `flush()` + `os.fsync()`; fires `on_line` callback (GUI).
+  - `save_txt()` — already saved live; flushes and returns the path (`None` if nothing captured).
+  - `close()` — flushes and closes the file handle (call from the emit thread).
 
-**`minutes.py`** — `is_available()` (Ollama `/api/tags` ping), `generate_minutes(transcript, when, on_token)` (streams `/api/generate`, raises `RuntimeError` on connection failure).
+**`translator.py`** — transcript / single-line translation via local LLM (Ollama).
+- `TARGET_LANGUAGES` — supported targets (Korean/English/Chinese).
+- `PROMPT_TEMPLATE` / `LINE_PROMPT_TEMPLATE` — full-transcript and single-line prompts.
+- `_stream_generate(prompt, temperature, num_ctx, on_token=None)` — POSTs `/api/generate` (streaming), returns full text, raises `RuntimeError` on connection failure. Shared by both translate paths.
+- `translate_line(text, target_language="Korean", on_token=None)` — one utterance → translated line, short prompt + small context (`num_ctx=2048`) for fast real-time translation. **Used by the GUI's live-translate.**
+- `is_available()` — Ollama `/api/tags` ping.
+- `translate_transcript(transcript, target_language="Korean", on_token=None)` — whole transcript → translated transcript (streams, preserves timestamps + speaker tags).
 
-**`main.py`** — `consume_loop(capture, stt, out, stop_event)` (CLI pipeline loop), `main()` (wires threads, Ctrl+C → save).
+**`minutes.py`** — minutes generation via local LLM (Ollama).
+- `PROMPT_TEMPLATE` — minutes prompt (same language as transcript; Summary / Discussion / Decisions / Action Items).
+- `is_available()` — Ollama `/api/tags` ping.
+- `generate_minutes(transcript, when="", on_token=None)` — transcript → markdown minutes (streams `/api/generate`, raises `RuntimeError` on failure).
 
-**`gui.py`** — `STTController` runs the pipeline in a worker thread, passes lines to GUI via `line_queue`; `request_model()` triggers no-drop hot model swap. `App` builds customtkinter UI (4 tabs: Live STT / Live Summary / Translator / Minutes), `_poll_queue` drains queues onto the UI, `_update_live_summary` merges consecutive same-speaker turns (no LLM).
+**`main.py`** — the shared pipeline engine + CLI. **Single source of truth for the pipeline loop.**
+- `STTEngine(on_line=None, on_status=None, echo=True)` — producer → VAD → STT → Writer, with live model hot-swap.
+  - `request_model(model_size)` — requests a background model swap; the loop reloads and switches without dropping audio.
+  - `run(model_size, language, stop_event, session_started=None)` — blocking pipeline loop (run on a worker thread). Loads the model, opens capture, per-speaker VAD → transcribe → `writer.emit`; handles background reload/swap; finalizes tails and closes capture/writer in `finally`. `session_started` reuse = append to the same file.
+  - `save()` — returns the transcript path (`None` if nothing captured).
+- `main()` — thin CLI. `--list-devices` short-circuits; else spawns `STTEngine(echo=True)` on a worker thread, prints captions via `Writer` echo, Ctrl+C → stop + save.
+
+**`gui.py`** — customtkinter UI. **No pipeline logic.**
+- `STTController` — thin adapter over `STTEngine`.
+  - `__init__()` — creates the engine with `on_line`/`on_status` → `line_queue`, `echo=False`.
+  - `running` (property) — proxies `engine.running`.
+  - `request_model` / `stop` / `save` — delegate to the engine.
+  - `_emit_line` / `_status` — push `("line"|"status", …)` onto `line_queue`.
+  - `start(model_size, language, session_started=None)` — spawns the worker running `_run_engine`.
+  - `_run_engine(...)` — runs `engine.run`, catches exceptions → `("error", …)` on the queue.
+- `App` — the whole window.
+  - Build: `_build_toolbar` (Start/Stop/New, model+language menus), `_build_statusbar` (status dot, Save/Devices), `_build_tabs` + `_build_stt_tab` / `_build_live_tab` / `_build_translator_tab` / `_build_minutes_tab`.
+  - Session: `_on_start`, `_on_stop`, `_on_new`, `_on_save`, `_clear_captions`, `_idle_buttons`.
+  - Dropdowns: `_on_lang_change` (mutates `config.LANGUAGE`), `_on_model_change` (live model swap via the controller).
+  - Real-time translation (Translator tab): `_on_tab_change` (opening the tab turns live-translate on, leaving turns it off), `_enable_live_translate`, `_ensure_live_translate_worker`, `_pump_live_translate` (queues untranslated utterances), `_live_translate_worker` (translates one line at a time via `translator.translate_line`, pushes `("ltline", block)`).
+  - Full translate: `_on_translate`, `_translation_worker` (streams `translate_transcript`), `_on_save_translation`.
+  - Minutes: `_on_make_minutes`, `_minutes_worker` (streams `generate_minutes`), `_on_save_minutes`.
+  - Render: `_speaker_tag`, `_append` (adds a caption; accumulates `session_lines` + `_utterances`; pumps live-translate), `_update_live_summary` / `_render_live_summary` (per-speaker merge, no LLM), `_append_minutes_token`, `_append_translation_token`, `_set_translation_text`, `_set_minutes_text`, `_set_status`, `_toast`.
+  - Loop: `_poll_queue` (drains `line_queue` / `translation_queue` / `minutes_queue` onto the UI every 100ms), `_on_close`.
+- `main()` — creates the `CTk` root, builds `App`, runs `mainloop`.
 
 ## Configuration
 

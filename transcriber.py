@@ -32,12 +32,31 @@ def _normalize(text):
     return re.sub(r"\s+", " ", t)
 
 
+# Keyword combos that are ALWAYS YouTube-outro boilerplate in a meeting/lecture,
+# regardless of the exact verb ending Whisper picks (부탁드려요 / 부탁드립니다 / 부탁해요 ...).
+# Each tuple: chunk is dropped if it contains ALL of these substrings (normalized).
+HALLUCINATION_KEYWORD_SETS = [
+    ("구독", "좋아요"),        # "구독과 좋아요 부탁..." (subscribe + like)
+    ("시청", "감사"),          # "시청해주셔서 감사합니다"
+    ("한글자막",),             # "한글자막 by 한효정" — subtitle-credit residue (trailing name defeats exact match)
+    ("자막", "by"),            # "자막 by ...", "번역/자막 by <name>"
+    ("subscribe", "like"),
+    ("thanks", "watching"),
+    ("thank you", "watching"),
+    ("subtitles", "by"),       # "subtitles by <name>" — English subtitle credit
+]
+
+
 def is_hallucination(text):
     """True if the whole chunk is a boilerplate hallucination."""
     global _HAL_NORMALIZED
     if _HAL_NORMALIZED is None:
         _HAL_NORMALIZED = {_normalize(p) for p in HALLUCINATION_PHRASES}
-    return _normalize(text) in _HAL_NORMALIZED
+    norm = _normalize(text)
+    if norm in _HAL_NORMALIZED:
+        return True
+    # Keyword-combo guard: catches every verb-ending variant of the same outro line.
+    return any(all(kw in norm for kw in kws) for kws in HALLUCINATION_KEYWORD_SETS)
 
 
 def is_repetitive(text):

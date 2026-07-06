@@ -1,7 +1,9 @@
 """STT transcription GUI — modern UI (customtkinter).
 
 - Tab 1 🎙 Live STT: real-time scrolling captions colored per speaker
-- Tab 2 📝 Minutes: turn the transcript into minutes with a local LLM (Ollama)
+- Tab 2 ⚡ Live Summary: per-speaker live accumulation
+- Tab 3 🌐 Translator: translate the transcript with a local LLM (Ollama)
+- Tab 4 📝 Minutes: turn the transcript into minutes with a local LLM (Ollama)
 - Start/Stop/New session, model & language selection, automatic txt saving
 """
 import warnings
@@ -16,14 +18,14 @@ import customtkinter as ctk
 
 import config
 import minutes
-from audio_capture import MultiCapture, list_input_devices
-from vad_buffer import VADBuffer
-from writer import Writer
-
-# Transcriber is heavy (model load) -> import/create it when Start is pressed.
+import translator
+from audio_capture import list_input_devices
+from main import STTEngine   # the shared pipeline engine — single source of truth
 
 MODEL_CHOICES = ["base", "small", "medium", "large-v3-turbo", "large-v3"]
-LANG_CHOICES = [("Auto", None), ("Korean", "ko"), ("English", "en")]
+LANG_CHOICES = [("Auto", None), ("Korean", "ko"), ("English", "en"), ("Chinese", "zh")]
+# Translation target name -> Whisper language code (to skip translating same-language lines)
+TARGET_LANG_CODE = {"Korean": "ko", "English": "en", "Chinese": "zh"}
 
 # --- Palette (modern dark) ---
 ACCENT = "#6366f1"        # indigo
@@ -43,20 +45,26 @@ ctk.set_default_color_theme("dark-blue")
 
 
 class STTController:
-    """Runs the pipeline on a background thread and passes caption lines to the GUI via a queue."""
+    """Thin GUI adapter over `STTEngine`.
+
+    Owns no pipeline logic — it just runs the shared engine on a worker thread and
+    funnels the engine's callbacks (line / status / error) into a queue the UI drains.
+    """
 
     def __init__(self):
         self.line_queue = queue.Queue()    # ('line'|'status'|'error', payload)
         self.stop_event = threading.Event()
         self.worker = None
-        self.capture = None
-        self.writer = None
-        self.running = False
-        self._pending_model = None   # model swap request while running (string)
+        self.engine = STTEngine(on_line=self._emit_line, on_status=self._status,
+                                echo=False)   # GUI shows lines itself; no terminal echo
+
+    @property
+    def running(self):
+        return self.engine.running
 
     def request_model(self, model_size):
-        """Request a model swap while running. The worker reloads on the next loop."""
-        self._pending_model = model_size
+        """Request a live model swap. Delegated straight to the engine."""
+        self.engine.request_model(model_size)
 
     def _emit_line(self, line, lang, text, ts, speaker):
         self.line_queue.put(("line", (ts, speaker, lang, text)))
@@ -65,103 +73,27 @@ class STTController:
         self.line_queue.put(("status", msg))
 
     def start(self, model_size, language, session_started=None):
-        if self.running:
+        if self.engine.running:
             return
         self.stop_event.clear()
-        self.running = True
         self.worker = threading.Thread(
-            target=self._run, args=(model_size, language, session_started),
+            target=self._run_engine,
+            args=(model_size, language, session_started),
             daemon=True,
         )
         self.worker.start()
 
-    def _run(self, model_size, language, session_started=None):
+    def _run_engine(self, model_size, language, session_started):
         try:
-            config.MODEL_SIZE = model_size
-            config.LANGUAGE = language
-            self._status(f"Loading model: {model_size} …")
-            from transcriber import Transcriber  # lazy import
-            stt = Transcriber()
-
-            # Starting again with the same session_started appends to the same file
-            self.writer = Writer(on_line=self._emit_line, echo=False,
-                                 started_at=session_started)
-            self.capture = MultiCapture(config.SOURCES)
-            self.capture.start()
-
-            vads = {sp: VADBuffer() for sp in self.capture.speakers()}
-            who = " + ".join(self.capture.speakers())
-            current_model = model_size
-            self._pending_model = None
-            self._status(f"Transcribing · {who} · {current_model}")
-
-            # Background model loader: keep transcribing with the old model until the new one is ready,
-            # then swap the moment it finishes loading (no interruption).
-            loader = {"thread": None, "model": None, "stt": None, "error": None}
-
-            def _load(model_name, box):
-                try:
-                    config.MODEL_SIZE = model_name
-                    box["stt"] = Transcriber()   # download+load (seconds to tens of seconds)
-                    box["model"] = model_name
-                except Exception as e:  # noqa: BLE001
-                    box["error"] = str(e)
-
-            while not self.stop_event.is_set():
-                # 1) If there is a swap request and nothing is loading -> start a background load
-                pending = self._pending_model
-                if pending and pending != current_model and loader["thread"] is None:
-                    self._pending_model = None
-                    self._status(f"Loading {pending} … (still using {current_model})")
-                    loader["thread"] = threading.Thread(
-                        target=_load, args=(pending, loader), daemon=True)
-                    loader["thread"].start()
-
-                # 2) If the load finished -> swap right then
-                if loader["thread"] is not None and not loader["thread"].is_alive():
-                    if loader["error"]:
-                        self._status(f"Model load failed: {loader['error']}")
-                    elif loader["stt"] is not None:
-                        stt = loader["stt"]
-                        current_model = loader["model"]
-                        self._status(f"Transcribing · {who} · {current_model}")
-                    loader = {"thread": None, "model": None,
-                              "stt": None, "error": None}
-
-                try:
-                    speaker, block = self.capture.audio_queue.get(timeout=0.5)
-                except queue.Empty:
-                    continue
-                if speaker not in vads:
-                    vads[speaker] = VADBuffer()
-                for chunk in vads[speaker].add(block):
-                    lang, text = stt.transcribe(chunk)
-                    self.writer.emit(lang, text, speaker=speaker)
-
-            for speaker, vad in vads.items():
-                tail = vad.finalize()
-                if tail is not None:
-                    lang, text = stt.transcribe(tail)
-                    self.writer.emit(lang, text, speaker=speaker)
-
+            self.engine.run(model_size, language, self.stop_event, session_started)
         except Exception as e:  # noqa: BLE001
             self.line_queue.put(("error", f"Error: {e}"))
-        finally:
-            if self.capture is not None:
-                self.capture.stop()
-                self.capture = None
-            if self.writer is not None:
-                self.writer.close()
-            self.running = False
-            self._status("Stopped")
 
     def stop(self):
         self.stop_event.set()
 
     def save(self):
-        if self.writer is None:
-            return None
-        return self.writer.save_txt()
+        return self.engine.save()
 
 
 class App:
@@ -170,12 +102,20 @@ class App:
         self.ctrl = STTController()
         self.session_lines = []
         self.session_started = None
+        self.translation_queue = queue.Queue()
         self.minutes_queue = queue.Queue()
         self.minutes_busy = False
         self._speaker_colors = {}
         self._live_summary = []      # [[speaker, [text, ...]], ...] merges consecutive same-speaker turns
 
-        root.title("Live STT · Minutes")
+        # --- real-time translation ---
+        self._utterances = []                 # [(ts, speaker, lang, text), ...] raw, for live translate
+        self._live_translate_idx = 0          # how many utterances have been queued for translation
+        self.live_translate = False           # on when the Translator tab is open + Ollama is up
+        self.live_translate_queue = queue.Queue()   # feed to the live-translate worker
+        self.live_translate_thread = None
+
+        root.title("Live STT · Translator · Minutes")
         root.geometry("760x640")
         root.minsize(560, 460)
         root.configure(fg_color="#0f0f14")
@@ -251,11 +191,6 @@ class App:
         ctk.CTkLabel(bar, textvariable=self.status_var, font=self.ui_font,
                      text_color="#d4d4de").pack(side="left")
 
-        self.save_btn = ctk.CTkButton(
-            bar, text="💾  Save txt", command=self._on_save, width=104, height=30,
-            corner_radius=8, font=self.ui_font,
-            fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER)
-        self.save_btn.pack(side="right", padx=(0, 14), pady=7)
         self.devices_btn = ctk.CTkButton(
             bar, text="Devices", command=lambda: list_input_devices(),
             width=80, height=30, corner_radius=8, font=self.ui_font,
@@ -266,17 +201,31 @@ class App:
     def _build_tabs(self):
         self.tabs = ctk.CTkTabview(
             self.root, fg_color=PANEL, corner_radius=12,
+            command=self._on_tab_change,
             segmented_button_selected_color=ACCENT,
             segmented_button_selected_hover_color=ACCENT_HOVER)
         self.tabs.pack(fill="both", expand=True, padx=16, pady=0)
         stt_tab = self.tabs.add("🎙  Live STT")
         live_tab = self.tabs.add("⚡  Live Summary")
+        self._translator_tab_name = "🌐  Translator"
+        trans_tab = self.tabs.add(self._translator_tab_name)
         min_tab = self.tabs.add("📝  Minutes")
         self._build_stt_tab(stt_tab)
         self._build_live_tab(live_tab)
+        self._build_translator_tab(trans_tab)
         self._build_minutes_tab(min_tab)
 
     def _build_stt_tab(self, tab):
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.pack(fill="x", padx=4, pady=(6, 2))
+        ctk.CTkLabel(bar, text="Live captions → transcript .txt (saved automatically)",
+                     font=self.ui_font, text_color=TEXT_MUTED).pack(side="left", padx=(4, 0))
+        self.save_btn = ctk.CTkButton(
+            bar, text="💾  Save txt", command=self._on_save,
+            width=104, height=34, corner_radius=10, font=self.ui_font,
+            fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER)
+        self.save_btn.pack(side="right")
+
         self.text = ctk.CTkTextbox(
             tab, font=self.mono_font, corner_radius=10,
             fg_color="#121218", text_color="#e8e8ee", wrap="word",
@@ -296,6 +245,37 @@ class App:
             border_spacing=6)
         self.live_text.pack(fill="both", expand=True, padx=4, pady=6)
         self.live_text.configure(state="disabled")
+
+    def _build_translator_tab(self, tab):
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.pack(fill="x", padx=4, pady=(6, 2))
+        ctk.CTkLabel(bar, text="Translate to", font=self.ui_font,
+                     text_color=TEXT_MUTED).pack(side="left")
+        self.translation_lang_var = ctk.StringVar(value="Korean")
+        self.translation_lang_menu = ctk.CTkOptionMenu(
+            bar, values=list(translator.TARGET_LANGUAGES.keys()),
+            variable=self.translation_lang_var,
+            command=self._on_translation_lang_change,
+            width=112, height=34, corner_radius=10, font=self.ui_font,
+            fg_color=NEUTRAL, button_color=NEUTRAL,
+            button_hover_color=NEUTRAL_HOVER)
+        self.translation_lang_menu.pack(side="left", padx=(8, 0))
+        self.translation_save_btn = ctk.CTkButton(
+            bar, text="💾  Save", command=self._on_save_translation,
+            width=104, height=34, corner_radius=10, font=self.ui_font,
+            state="disabled", fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER)
+        self.translation_save_btn.pack(side="left", padx=(8, 0))
+        self.translation_hint = ctk.CTkLabel(
+            bar, text="Live translation — every line as it's transcribed",
+            font=self.ui_font, text_color=TEXT_MUTED)
+        self.translation_hint.pack(side="left", padx=(12, 0))
+
+        self.translation_text = ctk.CTkTextbox(
+            tab, font=self.mono_font, corner_radius=10,
+            fg_color="#121218", text_color="#e8e8ee", wrap="word",
+            border_spacing=6)
+        self.translation_text.pack(fill="both", expand=True, padx=4, pady=6)
+        self.translation_text.configure(state="disabled")
 
     def _build_minutes_tab(self, tab):
         bar = ctk.CTkFrame(tab, fg_color="transparent")
@@ -328,12 +308,23 @@ class App:
         self.text.delete("1.0", "end")
         self.text.configure(state="disabled")
         self.session_lines = []
+        self._utterances = []
+        self._live_translate_idx = 0
         self._live_summary = []
         self.live_text.configure(state="normal")
         self.live_text.delete("1.0", "end")
         self.live_text.configure(state="disabled")
+        self._set_translation_text("")
+        self.translation_save_btn.configure(state="disabled")
         self._set_minutes_text("")
         self.minutes_save_btn.configure(state="disabled")
+
+    def _set_translation_text(self, s):
+        self.translation_text.configure(state="normal")
+        self.translation_text.delete("1.0", "end")
+        if s:
+            self.translation_text.insert("end", s)
+        self.translation_text.configure(state="disabled")
 
     def _set_minutes_text(self, s):
         self.minutes_text.configure(state="normal")
@@ -392,6 +383,78 @@ class App:
             self._toast(f"Saved: {os.path.basename(path)}")
         else:
             self._toast("Nothing to save.")
+
+    # ---------- real-time translation ----------
+    def _on_tab_change(self):
+        """Opening the Translator tab turns on live translation; leaving it turns it off."""
+        if self.tabs.get() == self._translator_tab_name:
+            self._enable_live_translate()
+        else:
+            self.live_translate = False
+
+    def _enable_live_translate(self):
+        """Turn on live translation: every utterance is rendered in the target language."""
+        self.live_translate = True
+        self._ensure_live_translate_worker()
+        target = self.translation_lang_var.get()
+        if translator.is_available():
+            self.translation_hint.configure(text=f"🔴 Live → {target}")
+        else:
+            # Same-language lines still render as-is; only cross-language lines need Ollama.
+            self.translation_hint.configure(
+                text=f"🔴 Live → {target} (translation needs: ollama serve)")
+        self._pump_live_translate()   # flush any backlog transcribed before the tab was opened
+
+    def _on_translation_lang_change(self, _choice=None):
+        """Changing the target language re-renders the whole transcript in that language."""
+        self._live_translate_idx = 0          # replay every utterance under the new target
+        self._set_translation_text("")
+        self.translation_save_btn.configure(state="disabled")
+        if self.live_translate or self.tabs.get() == self._translator_tab_name:
+            self._enable_live_translate()
+
+    def _ensure_live_translate_worker(self):
+        if self.live_translate_thread is None:
+            self.live_translate_thread = threading.Thread(
+                target=self._live_translate_worker, daemon=True)
+            self.live_translate_thread.start()
+
+    def _pump_live_translate(self):
+        """Queue every not-yet-rendered utterance for the worker (with its detected language)."""
+        target = self.translation_lang_var.get()
+        while self._live_translate_idx < len(self._utterances):
+            ts, speaker, lang, text = self._utterances[self._live_translate_idx]
+            self._live_translate_idx += 1
+            if text.strip():
+                self.live_translate_queue.put((ts, speaker, lang, text, target))
+
+    def _live_translate_worker(self):
+        """Background: one utterance at a time. Same language -> keep as-is; else translate."""
+        while True:
+            ts, speaker, lang, text, target = self.live_translate_queue.get()
+            if lang and lang == TARGET_LANG_CODE.get(target):
+                out = text.strip()          # already in the target language -> no LLM call
+            else:
+                try:
+                    out = translator.translate_line(text, target_language=target)
+                except Exception as e:  # noqa: BLE001
+                    out = f"[translate error: {e}]"
+            who = f"{speaker} · " if speaker else ""
+            block = f"{ts}  {who}{target}\n{out}\n\n"
+            self.translation_queue.put(("ltline", block))
+
+    def _on_save_translation(self):
+        content = self.translation_text.get("1.0", "end").strip()
+        if not content:
+            self._toast("No translation to save.")
+            return
+        os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+        stamp = (self.session_started or datetime.now()).strftime("%Y-%m-%d_%H-%M")
+        target = self.translation_lang_var.get().lower()
+        path = os.path.join(config.OUTPUT_DIR, f"translation_{target}_{stamp}.md")
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content + "\n")
+        self._toast(f"Translation saved: {os.path.basename(path)}")
 
     # ---------- minutes (local LLM) ----------
     def _on_make_minutes(self):
@@ -458,7 +521,10 @@ class App:
         self.text.configure(state="disabled")
         who_txt = f"[{speaker}] " if speaker else ""
         self.session_lines.append(f"[{ts}] {who_txt}({lang}) {text}")
+        self._utterances.append((ts, speaker, lang, text))
         self._update_live_summary(speaker, text)
+        if self.live_translate:
+            self._pump_live_translate()
 
     def _update_live_summary(self, speaker, text):
         """Accumulate per-speaker utterances live without an LLM. Merge consecutive same-speaker turns into one block."""
@@ -486,6 +552,12 @@ class App:
         self.minutes_text.insert("end", tok)
         self.minutes_text.see("end")
         self.minutes_text.configure(state="disabled")
+
+    def _append_translation_token(self, tok):
+        self.translation_text.configure(state="normal")
+        self.translation_text.insert("end", tok)
+        self.translation_text.see("end")
+        self.translation_text.configure(state="disabled")
 
     def _idle_buttons(self):
         self.start_btn.configure(state="normal")
@@ -517,6 +589,15 @@ class App:
                     self._set_status("Error", "#ef4444")
                     self._idle_buttons()
                     self._toast(payload)
+        except queue.Empty:
+            pass
+
+        try:
+            while True:
+                kind, payload = self.translation_queue.get_nowait()
+                if kind == "ltline":
+                    self._append_translation_token(payload)
+                    self.translation_save_btn.configure(state="normal")
         except queue.Empty:
             pass
 
