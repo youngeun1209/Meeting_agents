@@ -211,8 +211,33 @@ STEPS = [
 
 
 def launch_app():
-    """Start the real GUI inside the venv and stop being the launcher."""
-    subprocess.Popen([VENV_PY, os.path.join(ROOT, "gui.py")], cwd=ROOT)
+    """Start the real GUI inside the venv and stop being the launcher.
+
+    Finder-launched apps discard the child's stdout/stderr, so a crash or a
+    diagnostic log (`[stt]`, `[audio] backlog full`, a traceback) would be
+    invisible — which makes freezes impossible to diagnose. Mirror the GUI's
+    combined output to gui_error.log next to the app instead.
+    """
+    log_path = os.path.join(ROOT, "gui_error.log")
+    try:
+        logf = open(log_path, "w", buffering=1)  # line-buffered so logs appear live
+    except Exception:
+        logf = None
+    subprocess.Popen(
+        [VENV_PY, "-u", os.path.join(ROOT, "gui.py")],  # -u: unbuffered, don't lose logs on hang
+        cwd=ROOT,
+        # Explicit stdin. When this launcher is started with its own stdin already closed (a
+        # Finder launch gives none), the open() above is handed descriptor 0 for the log file --
+        # verified -- and the GUI would inherit a WRITE-ONLY file as its stdin. Anything the GUI
+        # later spawns inherits it in turn and can die building sys.stdin, before running any of
+        # its own code. DEVNULL makes the GUI's fd 0 a readable, harmless descriptor instead.
+        stdin=subprocess.DEVNULL,
+        stdout=logf or subprocess.DEVNULL,
+        stderr=subprocess.STDOUT,
+        # Own process group, so closing the Terminal window that started us does not SIGHUP the
+        # GUI along with it. STT.command closes that window as soon as this returns.
+        start_new_session=True,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -328,26 +353,12 @@ def _osa_quote(s):
     return "'" + s.replace("'", "'\\''") + "'"
 
 
-def _dbg(msg):
-    try:
-        with open(os.path.join(ROOT, "setup_debug.log"), "a") as f:
-            f.write(msg + "\n")
-    except Exception:
-        pass
-
-
 def main():
-    _dbg("main start | all_ready=%s venv=%s pkgs=%s sidecar=%s marker=%s py=%s" % (
-        all_ready(), venv_ok(), packages_ok(), sidecar_ok(),
-        os.path.exists(MARKER), sys.executable))
     # Fast path: everything already in place -> straight into the app.
     if all_ready():
-        _dbg("taking fast path -> launch_app")
         launch_app()
         return
-    _dbg("opening SetupWindow")
     SetupWindow().mainloop()
-    _dbg("mainloop returned")
 
 
 if __name__ == "__main__":

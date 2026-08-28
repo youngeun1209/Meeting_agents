@@ -33,7 +33,13 @@ class Writer:
         self.path = os.path.join(config.OUTPUT_DIR, fname)
         fresh = (not os.path.exists(self.path)
                  or os.path.getsize(self.path) == 0)
-        self._file = open(self.path, "a", encoding="utf-8", buffering=1)
+        # 0600, not the umask default (0644): a transcript is a verbatim record of a private
+        # conversation, and on a shared Mac every other local account can read a 0644 file.
+        # os.open with the mode set is used rather than a chmod after the fact so the file is
+        # never briefly world-readable.
+        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        self._file = os.fdopen(fd, "a", encoding="utf-8", buffering=1)
+        os.chmod(self.path, 0o600)   # tighten too if the file predates this change
         if fresh:
             self._file.write(
                 f"# STT transcript — started {self.started_at.strftime('%Y-%m-%d %H:%M:%S')}\n"

@@ -21,18 +21,26 @@ gen 32x32 32;    gen 32x32@2x 64
 gen 128x128 128; gen 128x128@2x 256
 gen 256x256 256; gen 256x256@2x 512
 gen 512x512 512; cp "$WORK/icon_1024.png" "$WORK/AppIcon.iconset/icon_512x512@2x.png"
-iconutil -c icns "$WORK/AppIcon.iconset" -o "$WORK/AppIcon.icns"
+# Written into packaging/ rather than the temp dir: gui.py runs outside the bundle and needs
+# this same icon to set its Dock icon (see dock_icon.py), so it has to survive the build.
+iconutil -c icns "$WORK/AppIcon.iconset" -o AppIcon.icns
 
 echo "3/4 assembling bundle ..."
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$WORK/AppIcon.icns" "$APP/Contents/Resources/AppIcon.icns"
+cp AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 cp Info.plist "$APP/Contents/Info.plist"
 cp launch "$APP/Contents/MacOS/launch"
 chmod +x "$APP/Contents/MacOS/launch"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 
-echo "4/4 registering with Finder ..."
+echo "4/4 signing (ad-hoc) + registering with Finder ..."
+# Ad-hoc signature gives the bundle a stable identity so a Full Disk Access
+# grant sticks across launches (unsigned apps get re-prompted / lose the grant).
+# Clear xattr detritus first — cloud folders (OneDrive/iCloud) add metadata that
+# makes codesign refuse ("resource fork ... not allowed").
+xattr -cr "$APP" 2>/dev/null || true
+codesign --force --deep --sign - "$APP" 2>/dev/null || echo "  (codesign skipped)"
 touch "$APP"
 /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f "$APP" 2>/dev/null || true
 

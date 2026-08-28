@@ -1,6 +1,6 @@
 # Meeting Agents
 
-meeting agents is a local meeting assistant that shows real-time STT captions, provides a live summary while the meeting is still in progress, translates the full transcript, and generates meeting minutes after the session.
+meeting agents is a local meeting assistant that shows real-time STT captions, translates the full transcript, and generates meeting minutes after the session.
 
 It captures both the audio playing on your Mac, such as Zoom, Google Meet, or online lectures, and your microphone. The transcript is separated into `[Others]` and `[Me]`, and STT output is automatically saved under `transcripts/`.
 
@@ -99,11 +99,10 @@ python gui.py
    - `Chinese`: force Chinese
 3. Press `Start` to begin audio capture and transcription.
 4. During the meeting, live captions appear on screen and each utterance is saved automatically to a `.txt` file.
-5. Use the `Live Summary` tab to see consecutive turns grouped by speaker in real time.
-6. Press `Stop` when the meeting ends.
-7. In the `Translator` tab, choose Korean, English, or Chinese and press `Translate` to translate the full transcript.
-8. Save the generated translation as a `translation_*.md` Markdown file.
-9. In the `Minutes` tab, press `Generate` to let Ollama turn the full transcript into meeting minutes.
+5. Press `Stop` when the meeting ends.
+6. In the `Translator` tab, choose Korean, English, or Chinese and press `Translate` to translate the full transcript.
+7. Save the generated translation as a `translation_*.md` Markdown file.
+8. In the `Minutes` tab, press `Generate` to let Ollama turn the full transcript into meeting minutes.
 10. Save the generated minutes as a `minutes_*.md` Markdown file.
 
 Use `New` to clear the current screen and start a fresh transcript file for the next meeting.
@@ -154,7 +153,7 @@ Real-time STT output is saved as `transcripts/transcript_*.txt`. When you save g
 ## File guide
 
 - [config.py](config.py): STT model, language, audio sources, VAD, output path, and Ollama model settings
-- [gui.py](gui.py): GUI app for live STT, live summary, translation, and meeting minutes
+- [gui.py](gui.py): GUI app for live STT, translation, and meeting minutes
 - [main.py](main.py): CLI entry point for transcription and device listing
 - [audio_capture.py](audio_capture.py): Captures microphone and system audio, then sends blocks to the processing queue
 - [vad_buffer.py](vad_buffer.py): Splits audio blocks into utterances based on silence

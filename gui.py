@@ -1,8 +1,8 @@
 """STT transcription GUI — modern UI (customtkinter).
 
 - Tab 1 🎙 Live STT: real-time scrolling captions colored per speaker
-- Tab 2 ⚡ Live Summary: per-speaker live accumulation
-- Tab 3 🌐 Translator: translate the transcript with a local LLM (Ollama)
+- Tab 2 🌐 Translator: translate the transcript with a local LLM (Ollama)
+- Tab 3 📁 Audio File: re-transcribe a saved recording with speaker diarization
 - Tab 4 📝 Minutes: turn the transcript into minutes with a local LLM (Ollama)
 - Start/Stop/New session, model & language selection, automatic txt saving
 """
@@ -11,15 +11,25 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 
 import os
 import queue
+import resource
+import sys
 import threading
+import time
 from datetime import datetime
 
 import customtkinter as ctk
 
+import dock_icon
+import settings
+from tkinter import filedialog
+
 import config
+import batch
+import diarize
+import markdown_view
 import minutes
 import translator
-from audio_capture import list_input_devices
+from audio_capture import list_input_devices, put_drop_oldest
 from main import STTEngine   # the shared pipeline engine — single source of truth
 
 MODEL_CHOICES = ["base", "small", "medium", "large-v3-turbo", "large-v3"]
@@ -37,11 +47,24 @@ NEUTRAL_HOVER = "#3a3a46"
 BORDER = "#3a3a46"
 PANEL = "#17171f"
 TEXT_MUTED = "#8b8b99"
+# How often the streaming minutes are re-rendered as markdown (seconds). Low enough to look
+# live, high enough that re-parsing the growing document stays off the critical path.
+MINUTES_RENDER_INTERVAL_SEC = 0.5
+
 SPEAKER_PALETTE = ["#7ec8ff", "#9cffb0", "#ffcf7e",
                    "#ff9ec8", "#c8a0ff", "#a0ffe8"]
 
 ctk.set_appearance_mode("dark")
 ctk.set_default_color_theme("dark-blue")
+
+
+def _open_private(path):
+    """Create/truncate `path` with 0600 permissions before it is written.
+
+    Saved translations, minutes and rebuilt transcripts all contain the full meeting content,
+    so they get the same 0600 treatment as the raw transcript rather than the umask default.
+    """
+    os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600))
 
 
 class STTController:
@@ -105,15 +128,33 @@ class App:
         self.translation_queue = queue.Queue()
         self.minutes_queue = queue.Queue()
         self.minutes_busy = False
+        self.file_queue = queue.Queue()
+        self.file_busy = False
+        self.file_path = None
+        # The textboxes show RENDERED markdown (syntax stripped), so the original text has to be
+        # kept here -- reading it back out of the widget would save the rendering, not the markdown.
+        self.file_md = ""
+        self.minutes_md = ""
+        self._minutes_last_render = 0.0   # throttle for the streaming re-render
         self._speaker_colors = {}
-        self._live_summary = []      # [[speaker, [text, ...]], ...] merges consecutive same-speaker turns
 
         # --- real-time translation ---
         self._utterances = []                 # [(ts, speaker, lang, text), ...] raw, for live translate
         self._live_translate_idx = 0          # how many utterances have been queued for translation
         self.live_translate = False           # on when the Translator tab is open + Ollama is up
-        self.live_translate_queue = queue.Queue()   # feed to the live-translate worker
+        # Bounded: if Ollama translates slower than utterances arrive, keep only the newest
+        # backlog (live pane is best-effort; the STT tab + saved txt are authoritative).
+        self.live_translate_queue = queue.Queue(maxsize=200)   # feed to the live-translate worker
         self.live_translate_thread = None
+
+        # --- diagnostics (always on, cheap) — pinpoint what freezes the UI ---
+        # _poll_queue runs every 100ms on the MAIN thread. If the gap between runs
+        # balloons, the main loop is being starved/blocked -> that's the beach ball.
+        # We log the stall + resource stats to stderr (visible in the terminal, and
+        # captured to gui_error.log when launched via the .app).
+        self._diag_last_poll = time.monotonic()
+        self._diag_last_stats = 0.0
+        self._diag_max_gap = 0.0
 
         root.title("Live STT · Translator · Minutes")
         root.geometry("760x640")
@@ -206,13 +247,13 @@ class App:
             segmented_button_selected_hover_color=ACCENT_HOVER)
         self.tabs.pack(fill="both", expand=True, padx=16, pady=0)
         stt_tab = self.tabs.add("🎙  Live STT")
-        live_tab = self.tabs.add("⚡  Live Summary")
         self._translator_tab_name = "🌐  Translator"
         trans_tab = self.tabs.add(self._translator_tab_name)
+        file_tab = self.tabs.add("📁  Audio File")
         min_tab = self.tabs.add("📝  Minutes")
         self._build_stt_tab(stt_tab)
-        self._build_live_tab(live_tab)
         self._build_translator_tab(trans_tab)
+        self._build_file_tab(file_tab)
         self._build_minutes_tab(min_tab)
 
     def _build_stt_tab(self, tab):
@@ -226,6 +267,23 @@ class App:
             fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER)
         self.save_btn.pack(side="right")
 
+        # Raw-audio archival. The engine reads config.SAVE_AUDIO once at start, so a mid-session
+        # toggle can only take effect on the next Start — say so instead of silently doing nothing.
+        self.save_audio_var = ctk.BooleanVar(value=config.SAVE_AUDIO)
+        self.save_audio_switch = ctk.CTkSwitch(
+            bar, text="🎧  Save audio", variable=self.save_audio_var,
+            command=self._on_save_audio_toggle, font=self.ui_font,
+            progress_color=ACCENT, text_color="#c9c9d4")
+        self.save_audio_switch.pack(side="right", padx=(0, 12))
+
+        # Where everything is written. Shows the folder name; the full path is in the toast.
+        self.outdir_btn = ctk.CTkButton(
+            bar, text="\U0001f4c2", command=self._on_pick_output_dir,
+            width=170, height=34, corner_radius=10, font=self.ui_font,
+            fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER)
+        self.outdir_btn.pack(side="right", padx=(0, 12))
+        self._refresh_outdir_btn()
+
         self.text = ctk.CTkTextbox(
             tab, font=self.mono_font, corner_radius=10,
             fg_color="#121218", text_color="#e8e8ee", wrap="word",
@@ -233,18 +291,6 @@ class App:
         self.text.pack(fill="both", expand=True, padx=4, pady=6)
         self.text.configure(state="disabled")
         self.text.tag_config("ts", foreground=TEXT_MUTED)
-
-    def _build_live_tab(self, tab):
-        hint = ctk.CTkLabel(
-            tab, text="Live per-speaker accumulation (no LLM). Generate the polished version in the Minutes tab.",
-            font=self.ui_font, text_color=TEXT_MUTED)
-        hint.pack(fill="x", padx=8, pady=(8, 2))
-        self.live_text = ctk.CTkTextbox(
-            tab, font=self.mono_font, corner_radius=10,
-            fg_color="#121218", text_color="#e8e8ee", wrap="word",
-            border_spacing=6)
-        self.live_text.pack(fill="both", expand=True, padx=4, pady=6)
-        self.live_text.configure(state="disabled")
 
     def _build_translator_tab(self, tab):
         bar = ctk.CTkFrame(tab, fg_color="transparent")
@@ -276,6 +322,132 @@ class App:
             border_spacing=6)
         self.translation_text.pack(fill="both", expand=True, padx=4, pady=6)
         self.translation_text.configure(state="disabled")
+
+    def _build_file_tab(self, tab):
+        """Mode 2: rebuild a transcript from an audio FILE, after the meeting.
+
+        Mode 1 (the toolbar Start/Stop) tags speakers by audio source, which is exact but only
+        separates people who were on different sources -- an in-person meeting puts everyone on the
+        one mic. This mode re-transcribes the audio and separates speakers from the sound itself,
+        and because it works off audio-relative time it also gets timestamps that actually line up
+        (the realtime ones are stamped when transcription finished, several seconds late).
+        """
+        bar = ctk.CTkFrame(tab, fg_color="transparent")
+        bar.pack(fill="x", padx=4, pady=(6, 2))
+        self.file_pick_btn = ctk.CTkButton(
+            bar, text="📁  Choose audio…", command=self._on_pick_file,
+            width=150, height=34, corner_radius=10, font=self.ui_font,
+            fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER)
+        self.file_pick_btn.pack(side="left")
+        self.file_run_btn = ctk.CTkButton(
+            bar, text="✨  Rebuild", command=self._on_run_file,
+            width=120, height=34, corner_radius=10, font=self.ui_bold,
+            state="disabled", fg_color=ACCENT, hover_color=ACCENT_HOVER)
+        self.file_run_btn.pack(side="left", padx=(8, 0))
+        self.file_save_btn = ctk.CTkButton(
+            bar, text="💾  Save", command=self._on_save_file,
+            width=100, height=34, corner_radius=10, font=self.ui_font,
+            state="disabled", fg_color=NEUTRAL, hover_color=NEUTRAL_HOVER)
+        self.file_save_btn.pack(side="left", padx=(8, 0))
+
+        ctk.CTkLabel(bar, text="Speakers", font=self.ui_font,
+                     text_color=TEXT_MUTED).pack(side="left", padx=(16, 6))
+        # Defaults to 2, not Auto: naming the exact count is markedly more reliable than
+        # threshold clustering (which collapsed two speakers into one at the wrong threshold during
+        # testing), and a 1:1 interview -- the main use here -- is always 2.
+        self.file_speakers_var = ctk.StringVar(value="2")
+        ctk.CTkOptionMenu(
+            bar, values=["Auto", "2", "3", "4", "5"], variable=self.file_speakers_var,
+            width=84, height=34, corner_radius=10, font=self.ui_font,
+            fg_color=NEUTRAL, button_color=NEUTRAL,
+            button_hover_color=NEUTRAL_HOVER).pack(side="left")
+
+        self.file_typo_var = ctk.BooleanVar(value=True)
+        ctk.CTkSwitch(bar, text="Fix typos", variable=self.file_typo_var,
+                      font=self.ui_font, progress_color=ACCENT,
+                      text_color="#c9c9d4").pack(side="left", padx=(14, 0))
+
+        self.file_hint = ctk.CTkLabel(
+            tab, text="Pick a recording (wav / m4a / mp3). Re-transcribes and separates speakers "
+                      "from the audio — slower than live, but far more accurate.",
+            font=self.ui_font, text_color=TEXT_MUTED, anchor="w")
+        self.file_hint.pack(fill="x", padx=8, pady=(4, 0))
+
+        self.file_text = ctk.CTkTextbox(
+            tab, font=self.mono_font, corner_radius=10,
+            fg_color="#121218", text_color="#e8e8ee", wrap="word",
+            border_spacing=6)
+        self.file_text.pack(fill="both", expand=True, padx=4, pady=6)
+        self.file_text.configure(state="disabled")
+
+    def _set_file_text(self, s, markdown=True):
+        """Show `s`. Rendered as markdown by default; plain for error/status text."""
+        self.file_md = s or ""
+        if markdown:
+            markdown_view.render(self.file_text, self.file_md, body_size=13)
+            return
+        self.file_text.configure(state="normal")
+        self.file_text.delete("1.0", "end")
+        if s:
+            self.file_text.insert("end", s)
+        self.file_text.configure(state="disabled")
+
+    def _on_pick_file(self):
+        path = filedialog.askopenfilename(
+            title="Choose a recording",
+            initialdir=os.path.abspath(config.OUTPUT_DIR),
+            filetypes=[("Audio", "*.wav *.m4a *.mp3 *.aiff *.aif *.caf *.flac *.mp4"),
+                       ("All files", "*.*")])
+        if not path:
+            return
+        self.file_path = path
+        self.file_run_btn.configure(state="normal")
+        self.file_hint.configure(text=f"Ready: {os.path.basename(path)}")
+
+    def _on_run_file(self):
+        if self.file_busy or not getattr(self, "file_path", None):
+            return
+        if not diarize.is_available():
+            self._set_file_text(
+                "Speaker-separation models are missing.\n\n"
+                f"Expected under: {os.path.abspath(config.DIARIZATION_DIR)}\n"
+                "See config.py — the download URLs are in the batch-mode section.",
+                markdown=False)
+            return
+        n = self.file_speakers_var.get()
+        num_speakers = None if n == "Auto" else int(n)
+        self.file_busy = True
+        self.file_run_btn.configure(state="disabled")
+        self.file_pick_btn.configure(state="disabled")
+        self.file_save_btn.configure(state="disabled")
+        self._set_file_text("")
+        self.file_hint.configure(text="Working… (re-transcribe → separate speakers → clean up)")
+        threading.Thread(target=self._file_worker,
+                         args=(self.file_path, num_speakers, bool(self.file_typo_var.get())),
+                         daemon=True).start()
+
+    def _file_worker(self, path, num_speakers, fix_typos):
+        try:
+            result = batch.transcribe_file(
+                path, num_speakers=num_speakers, fix_typos=fix_typos,
+                on_status=lambda msg: self.file_queue.put(("fstatus", msg)))
+            self.file_queue.put(("fdone", result))
+        except Exception as e:  # noqa: BLE001
+            self.file_queue.put(("ferror", str(e)))
+
+    def _on_save_file(self):
+        content = self.file_md.strip()   # the markdown, not the rendering shown in the widget
+        if not content:
+            self._toast("Nothing to save.")
+            return
+        base = os.path.splitext(os.path.basename(getattr(self, "file_path", "audio")))[0]
+        path = self._ask_save_path(f"rebuilt_{base}.md")
+        if not path:
+            return
+        _open_private(path)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(content + "\n")
+        self._toast(f"Saved: {os.path.basename(path)}")
 
     def _build_minutes_tab(self, tab):
         bar = ctk.CTkFrame(tab, fg_color="transparent")
@@ -310,12 +482,10 @@ class App:
         self.session_lines = []
         self._utterances = []
         self._live_translate_idx = 0
-        self._live_summary = []
-        self.live_text.configure(state="normal")
-        self.live_text.delete("1.0", "end")
-        self.live_text.configure(state="disabled")
         self._set_translation_text("")
         self.translation_save_btn.configure(state="disabled")
+        self._set_file_text("")
+        self.file_save_btn.configure(state="disabled")
         self._set_minutes_text("")
         self.minutes_save_btn.configure(state="disabled")
 
@@ -327,11 +497,9 @@ class App:
         self.translation_text.configure(state="disabled")
 
     def _set_minutes_text(self, s):
-        self.minutes_text.configure(state="normal")
-        self.minutes_text.delete("1.0", "end")
-        if s:
-            self.minutes_text.insert("end", s)
-        self.minutes_text.configure(state="disabled")
+        self.minutes_md = s or ""
+        self._minutes_last_render = 0.0
+        self._render_minutes()
 
     def _set_status(self, msg, color=None):
         self.status_var.set(msg)
@@ -377,12 +545,84 @@ class App:
         self.session_started = None   # next Start = new file
         self._set_status("Idle", TEXT_MUTED)
 
+    def _on_save_audio_toggle(self):
+        config.SAVE_AUDIO = bool(self.save_audio_var.get())
+        state = "on" if config.SAVE_AUDIO else "off"
+        if self.ctrl.running:
+            self._toast(f"Audio saving {state} — applies from the next session (Stop → Start).")
+        else:
+            self._toast(f"Audio saving {state}"
+                        + (" · ~1.9 MB/min per source" if config.SAVE_AUDIO else ""))
+
+    # ---------- where output is saved ----------
+    def _refresh_outdir_btn(self):
+        name = os.path.basename(config.OUTPUT_DIR.rstrip(os.sep)) or config.OUTPUT_DIR
+        self.outdir_btn.configure(text=f"\U0001f4c2  {name}")
+
+    def _use_output_dir(self, folder):
+        """Adopt `folder` as where everything is saved -- now, and on every launch after.
+
+        This is the whole "remember where I last saved" behaviour: it is called both from the
+        folder button and from every Save dialog, so simply saving somewhere else once is
+        enough to move the default there.
+        """
+        folder = os.path.abspath(folder)
+        if folder == os.path.abspath(config.OUTPUT_DIR):
+            return
+        if not settings.is_usable(folder):
+            self._toast(f"Cannot write to {folder}")
+            return
+        config.OUTPUT_DIR = folder
+        settings.set_output_dir(folder)
+        self._refresh_outdir_btn()
+
+    def _on_pick_output_dir(self):
+        folder = filedialog.askdirectory(
+            title="Where to save transcripts, audio, minutes and translations",
+            initialdir=config.OUTPUT_DIR, mustexist=False)
+        if not folder:
+            return
+        self._use_output_dir(folder)
+        if self.ctrl.running:
+            # writer.py and audio_writer.py open their files at Start, so the session already
+            # running keeps writing where it began -- say so instead of implying it moved.
+            self._toast(f"Saving to {config.OUTPUT_DIR} from the next session "
+                        f"(the running one keeps its current folder)")
+        else:
+            self._toast(f"Saving to {config.OUTPUT_DIR}")
+
+    def _ask_save_path(self, default_name):
+        """Ask where to write `default_name`, starting in the current output folder.
+
+        Returns the chosen path, or None if the dialog was cancelled. Choosing a different
+        folder makes it the default for everything saved afterwards.
+        """
+        os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+        path = filedialog.asksaveasfilename(
+            title="Save as",
+            initialdir=config.OUTPUT_DIR,
+            initialfile=default_name,
+            defaultextension=os.path.splitext(default_name)[1],
+            filetypes=[("Markdown", "*.md"), ("All files", "*.*")])
+        if not path:
+            return None
+        self._use_output_dir(os.path.dirname(path))
+        return path
+
     def _on_save(self):
         path = self.ctrl.save()
-        if path:
-            self._toast(f"Saved: {os.path.basename(path)}")
-        else:
+        if not path:
             self._toast("Nothing to save.")
+            return
+        # The folder, not the full path: the status bar is narrow, and where it landed is the
+        # part that is worth confirming now that the folder is settable.
+        where = os.path.basename(os.path.dirname(path)) or os.path.dirname(path)
+        audio = self.ctrl.engine.audio_paths()
+        if audio:
+            names = ", ".join(sorted(audio))       # speaker labels, not full paths
+            self._toast(f"Saved to {where}/: {os.path.basename(path)}  +  audio ({names})")
+        else:
+            self._toast(f"Saved to {where}/: {os.path.basename(path)}")
 
     # ---------- real-time translation ----------
     def _on_tab_change(self):
@@ -426,7 +666,7 @@ class App:
             ts, speaker, lang, text = self._utterances[self._live_translate_idx]
             self._live_translate_idx += 1
             if text.strip():
-                self.live_translate_queue.put((ts, speaker, lang, text, target))
+                put_drop_oldest(self.live_translate_queue, (ts, speaker, lang, text, target))
 
     def _live_translate_worker(self):
         """Background: one utterance at a time. Same language -> keep as-is; else translate."""
@@ -448,10 +688,12 @@ class App:
         if not content:
             self._toast("No translation to save.")
             return
-        os.makedirs(config.OUTPUT_DIR, exist_ok=True)
         stamp = (self.session_started or datetime.now()).strftime("%Y-%m-%d_%H-%M")
         target = self.translation_lang_var.get().lower()
-        path = os.path.join(config.OUTPUT_DIR, f"translation_{target}_{stamp}.md")
+        path = self._ask_save_path(f"translation_{target}_{stamp}.md")
+        if not path:
+            return
+        _open_private(path)   # 0600 before writing — same reasoning as writer.Writer
         with open(path, "w", encoding="utf-8") as f:
             f.write(content + "\n")
         self._toast(f"Translation saved: {os.path.basename(path)}")
@@ -491,13 +733,15 @@ class App:
             self.minutes_queue.put(("merror", str(e)))
 
     def _on_save_minutes(self):
-        content = self.minutes_text.get("1.0", "end").strip()
+        content = self.minutes_md.strip()   # the markdown, not the rendering shown in the widget
         if not content:
             self._toast("No minutes to save.")
             return
-        os.makedirs(config.OUTPUT_DIR, exist_ok=True)
         stamp = (self.session_started or datetime.now()).strftime("%Y-%m-%d_%H-%M")
-        path = os.path.join(config.OUTPUT_DIR, f"minutes_{stamp}.md")
+        path = self._ask_save_path(f"minutes_{stamp}.md")
+        if not path:
+            return
+        _open_private(path)   # 0600 before writing — same reasoning as writer.Writer
         with open(path, "w", encoding="utf-8") as f:
             f.write(content + "\n")
         self._toast(f"Minutes saved: {os.path.basename(path)}")
@@ -522,36 +766,40 @@ class App:
         who_txt = f"[{speaker}] " if speaker else ""
         self.session_lines.append(f"[{ts}] {who_txt}({lang}) {text}")
         self._utterances.append((ts, speaker, lang, text))
-        self._update_live_summary(speaker, text)
         if self.live_translate:
             self._pump_live_translate()
 
-    def _update_live_summary(self, speaker, text):
-        """Accumulate per-speaker utterances live without an LLM. Merge consecutive same-speaker turns into one block."""
-        if not text.strip():
-            return
-        who = speaker or "?"
-        if self._live_summary and self._live_summary[-1][0] == who:
-            self._live_summary[-1][1].append(text.strip())
-        else:
-            self._live_summary.append([who, [text.strip()]])
-        self._render_live_summary()
-
-    def _render_live_summary(self):
-        blocks = []
-        for who, texts in self._live_summary:
-            blocks.append(f"● {who}\n   {' '.join(texts)}")
-        self.live_text.configure(state="normal")
-        self.live_text.delete("1.0", "end")
-        self.live_text.insert("end", "\n\n".join(blocks))
-        self.live_text.see("end")
-        self.live_text.configure(state="disabled")
-
     def _append_minutes_token(self, tok):
-        self.minutes_text.configure(state="normal")
-        self.minutes_text.insert("end", tok)
+        # Render as it streams, throttled. Rendering per token would re-parse a growing document
+        # on every token; rendering ONLY at the end meant that any path which never reached the
+        # "done" event -- a generation error, a dropped connection -- left the raw `##`/`**`
+        # markdown on screen for good. Throttled re-render keeps the formatting correct at every
+        # moment regardless of how generation ends.
+        self.minutes_md += tok
+        now = time.monotonic()
+        if now - self._minutes_last_render < MINUTES_RENDER_INTERVAL_SEC:
+            return
+        self._minutes_last_render = now
+        self._render_minutes()
+
+    def _render_minutes(self):
+        """Show self.minutes_md as formatted markdown.
+
+        Guarded: this runs inside the Tk poll loop, and an exception escaping there would kill
+        the `root.after` chain -- the whole UI would stop updating, with the raw markdown frozen
+        on screen as the only symptom. On failure, fall back to the plain text so the content is
+        never lost, and say why on stderr.
+        """
+        try:
+            markdown_view.render(self.minutes_text, self.minutes_md, body_size=13)
+        except Exception as e:  # noqa: BLE001 - display must degrade, never crash the poll loop
+            print(f"[minutes] markdown render failed ({e!r}) - showing raw text",
+                  file=sys.stderr, flush=True)
+            self.minutes_text.configure(state="normal")
+            self.minutes_text.delete("1.0", "end")
+            self.minutes_text.insert("end", self.minutes_md)
+            self.minutes_text.configure(state="disabled")
         self.minutes_text.see("end")
-        self.minutes_text.configure(state="disabled")
 
     def _append_translation_token(self, tok):
         self.translation_text.configure(state="normal")
@@ -570,7 +818,44 @@ class App:
         """Briefly show a message in the status bar (simple toast substitute)."""
         self._set_status(msg)
 
+    def _diag(self):
+        """Main-thread health probe. Detects when the UI loop is being starved/blocked
+        (the beach ball) and logs resource stats so the real cause is caught on the next run."""
+        now = time.monotonic()
+        gap = now - self._diag_last_poll
+        self._diag_last_poll = now
+        if gap > self._diag_max_gap:
+            self._diag_max_gap = gap
+        # A stall: main loop didn't run for far longer than the 100ms schedule.
+        if gap > 0.6:
+            aq = "-"
+            try:
+                cap = getattr(self.ctrl.engine, "capture", None)
+                if cap is not None:
+                    aq = cap.audio_queue.qsize()
+            except Exception:
+                pass
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)  # MB (macOS: bytes)
+            print(f"[diag] MAIN-THREAD STALL {gap:.2f}s  audio_q={aq}  line_q={self.ctrl.line_queue.qsize()}  "
+                  f"utter={len(self._utterances)}  rssMB={rss:.0f}", file=sys.stderr, flush=True)
+        # Periodic heartbeat every ~15s so we see trend even without a stall.
+        if now - self._diag_last_stats > 15.0:
+            self._diag_last_stats = now
+            aq = "-"
+            try:
+                cap = getattr(self.ctrl.engine, "capture", None)
+                if cap is not None:
+                    aq = cap.audio_queue.qsize()
+            except Exception:
+                pass
+            rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+            print(f"[diag] alive running={self.ctrl.running}  audio_q={aq}  line_q={self.ctrl.line_queue.qsize()}  "
+                  f"utter={len(self._utterances)}  maxgap={self._diag_max_gap:.2f}s  rssMB={rss:.0f}",
+                  file=sys.stderr, flush=True)
+            self._diag_max_gap = 0.0
+
     def _poll_queue(self):
+        self._diag()
         try:
             while True:
                 kind, payload = self.ctrl.line_queue.get_nowait()
@@ -603,15 +888,42 @@ class App:
 
         try:
             while True:
+                kind, payload = self.file_queue.get_nowait()
+                if kind == "fstatus":
+                    self.file_hint.configure(text=payload)
+                elif kind == "fdone":
+                    self._set_file_text(payload["markdown"])
+                    self.file_busy = False
+                    self.file_run_btn.configure(state="normal")
+                    self.file_pick_btn.configure(state="normal")
+                    self.file_save_btn.configure(state="normal")
+                    n = len({t["speaker"] for t in payload["turns"] if t["speaker"] is not None})
+                    self.file_hint.configure(
+                        text=f"Done · {len(payload['turns'])} turns · {n} speaker(s) · 💾 Save")
+                elif kind == "ferror":
+                    self.file_busy = False
+                    self.file_run_btn.configure(state="normal")
+                    self.file_pick_btn.configure(state="normal")
+                    self.file_hint.configure(text="Failed")
+                    self._set_file_text(payload, markdown=False)
+        except queue.Empty:
+            pass
+
+        try:
+            while True:
                 kind, payload = self.minutes_queue.get_nowait()
                 if kind == "mtoken":
                     self._append_minutes_token(payload)
                 elif kind == "mdone":
+                    self._render_minutes()
                     self.minutes_busy = False
                     self.make_btn.configure(state="normal")
                     self.minutes_save_btn.configure(state="normal")
-                    self.minutes_hint.configure(text="Done · edit then 💾 Save")
+                    self.minutes_hint.configure(text="Done · 💾 Save to keep it")
                 elif kind == "merror":
+                    # Render whatever did arrive: a partial answer is still markdown, and leaving
+                    # it raw is exactly the bug this path used to produce.
+                    self._render_minutes()
                     self.minutes_busy = False
                     self.make_btn.configure(state="normal")
                     self.minutes_hint.configure(text="Failed")
@@ -632,6 +944,8 @@ class App:
 def main():
     root = ctk.CTk()
     App(root)
+    # After Tk owns the NSApplication, never before -- see dock_icon.apply().
+    dock_icon.apply()
     root.mainloop()
 
 

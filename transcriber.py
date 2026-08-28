@@ -88,7 +88,9 @@ class Transcriber:
     # ---------- mlx (Apple GPU) ----------
     def _init_mlx(self):
         import mlx_whisper  # lazy import
+        import mlx.core as mx  # lazy import (Metal memory control)
         self._mlx = mlx_whisper
+        self._mx = mx
         self._repo = config.MLX_MODEL_MAP.get(config.MODEL_SIZE)
         if self._repo is None:
             raise RuntimeError(
@@ -115,6 +117,11 @@ class Transcriber:
         )
         text = (res.get("text") or "").strip()
         lang = res.get("language") or (config.LANGUAGE or "")
+        # Release Metal buffer cache so unified memory doesn't climb across calls.
+        # mlx keeps freed buffers in a cache pool by default; over a long session this
+        # grows until the Mac swaps -> UI beach ball. Trim once the pool passes a limit.
+        if self._mx.get_cache_memory() > config.MLX_CACHE_LIMIT_BYTES:
+            self._mx.clear_cache()
         return lang, text
 
     # ---------- faster-whisper (CPU) ----------

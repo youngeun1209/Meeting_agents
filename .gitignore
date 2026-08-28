@@ -14,3 +14,5 @@ docs/system-audio-capture.md
 docs/multi-output-setup.md
 docs/ladiocast-setup.md
 docs/design-spec.md
+models/
+settings.json          # per-machine user settings (output folder)

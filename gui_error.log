@@ -1,0 +1,164 @@
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.19s  rssMB=200
+[diag] MAIN-THREAD STALL 16.37s  audio_q=-  line_q=0  utter=0  rssMB=216
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=16.37s  rssMB=216
+Fetching 4 files:   0%|          | 0/4 [00:00<?, ?it/s]Fetching 4 files: 100%|██████████| 4/4 [00:00<00:00, 4123.18it/s]
+Fatal Python error: init_sys_streams: can't initialize sys standard streams
+Python runtime state: core initialized
+OSError: [Errno 9] Bad file descriptor
+
+Current thread 0x00000001fa206180 (most recent call first):
+  <no Python frame>
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.50s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.21s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.19s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.18s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.15s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.12s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.16s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.15s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.10s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.11s  rssMB=1532
+[diag] alive running=False  audio_q=-  line_q=0  utter=0  maxgap=0.16s  rssMB=1532
+/Library/Frameworks/Python.framework/Versions/3.13/lib/python3.13/multiprocessing/resource_tracker.py:136: UserWarning: resource_tracker: process died unexpectedly, relaunching.  Some resources might leak.
+  warnings.warn('resource_tracker: process died unexpectedly, '
+Fatal Python error: init_sys_streams: can't initialize sys standard streams
+Python runtime state: core initialized
+OSError: [Errno 9] Bad file descriptor
+
+Current thread 0x00000001fa206180 (most recent call first):
+  <no Python frame>

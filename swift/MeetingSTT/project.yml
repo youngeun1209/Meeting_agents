@@ -1,0 +1,36 @@
+name: MeetingSTT
+options:
+  bundleIdPrefix: com.younglab
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+targets:
+  MeetingSTT:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - Resources/Assets.xcassets
+    info:
+      path: Support/Info.plist
+      properties:
+        CFBundleDisplayName: Meeting STT
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # Recording is the entire point of the app; say so plainly.
+        NSMicrophoneUsageDescription: >-
+          Meeting STT records audio so you can transcribe your meetings on your own device.
+        # Lets recordings be pulled off the phone via Finder/Files without any network transfer.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.younglab.meetingstt.ios
+        DEVELOPMENT_TEAM: HSHVNDN778
+        CODE_SIGN_STYLE: Automatic
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "5.0"
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

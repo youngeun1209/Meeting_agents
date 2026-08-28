@@ -90,11 +90,10 @@ python main.py --list-devices
    - `Chinese`: 중국어 고정
 3. `Start`를 누르면 회의 오디오 캡처와 STT가 시작됩니다.
 4. 회의를 진행하면 실시간 자막이 화면에 쌓이고, 각 발화는 자동으로 `.txt` 파일에 저장됩니다.
-5. `Live Summary` 탭에서 발화자가 이어서 말한 내용을 묶어 실시간으로 볼 수 있습니다.
-6. 회의가 끝나면 `Stop`을 누릅니다.
-7. `Translator` 탭에서 Korean, English, Chinese 중 하나를 고르고 `Translate`를 누르면 전체 transcript를 번역합니다.
-8. 생성된 번역문은 저장 버튼으로 `translation_*.md` 파일로 저장할 수 있습니다.
-9. `Minutes` 탭에서 `Generate`를 누르면 Ollama가 전체 transcript를 읽고 회의록을 생성합니다.
+5. 회의가 끝나면 `Stop`을 누릅니다.
+6. `Translator` 탭에서 Korean, English, Chinese 중 하나를 고르고 `Translate`를 누르면 전체 transcript를 번역합니다.
+7. 생성된 번역문은 저장 버튼으로 `translation_*.md` 파일로 저장할 수 있습니다.
+8. `Minutes` 탭에서 `Generate`를 누르면 Ollama가 전체 transcript를 읽고 회의록을 생성합니다.
 10. 생성된 회의록은 저장 버튼으로 `minutes_*.md` 파일로 저장할 수 있습니다.
 
 `New`는 현재 화면을 비우고 새 transcript 파일로 다음 회의를 시작할 때 사용합니다.

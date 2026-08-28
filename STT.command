@@ -23,4 +23,29 @@ if [ -z "$PY" ]; then
     exit 1
 fi
 
-exec "$PY" setup_app.py
+# Close this Terminal window once the app is up.
+#
+# The .app cannot launch Python itself: an ad-hoc signed bundle is refused READ access to a
+# project folder under ~/Documents (measured: READ_OK=no), so it hands off to Terminal, whose
+# TCC grant does work -- see "Meeting STT.app/Contents/MacOS/launch". That leaves a Terminal
+# window sitting there for the rest of the session, which is just noise.
+#
+# The window is matched by this shell's own tty, so only the window we are running in closes,
+# never one the user opened themselves. It is scheduled in the background and fires after the
+# shell has exited: closing a window whose process is still running makes Terminal put up a
+# "close anyway?" prompt, and waiting for "[Process completed]" avoids it. The GUI survives
+# because setup_app.py starts it in its own session (start_new_session=True).
+MY_TTY="$(tty)"
+(
+    sleep 2
+    /usr/bin/osascript -e "
+        tell application \"Terminal\"
+            repeat with w in windows
+                repeat with t in tabs of w
+                    if tty of t is \"$MY_TTY\" then close w saving no
+                end repeat
+            end repeat
+        end tell" >/dev/null 2>&1
+) &
+
+"$PY" setup_app.py

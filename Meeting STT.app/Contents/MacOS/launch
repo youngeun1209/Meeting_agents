@@ -1,33 +1,31 @@
 #!/bin/bash
-# App executable. Resolves the project folder (the directory that contains this
-# .app), makes Homebrew tools visible (Finder-launched apps get a bare PATH),
-# then hands off to the setup wizard, which installs anything missing and opens
-# the real GUI.
-HERE="$(cd "$(dirname "$0")" && pwd)"          # .../Meeting STT.app/Contents/MacOS
-ROOT="$(cd "$HERE/../../.." && pwd)"           # the folder holding the .app
-cd "$ROOT"
+# App executable — delegates to Terminal, does NOT run the app itself.
+#
+# WHY: an adhoc-signed, non-notarized .app launched from Finder cannot reliably
+# hold a TCC grant to READ its own folder under ~/Documents. Adding it to Full
+# Disk Access does not stick because the app has no stable code identity (adhoc =
+# cdhash changes on every edit; TCC has no record to match). That is exactly the
+# "needs permission to use its folder" dialog that never clears.
+#
+# Fix: don't read/run the project files here at all. Hand STT.command to `open`,
+# which LaunchServices opens with Terminal. Terminal HAS a stable identity and the
+# user's folder access (running `python gui.py` from Terminal already works), so
+# the app starts under Terminal's grant. This script only computes a path.
+LOG="/tmp/meeting_stt_launch.log"; : > "$LOG"
+echo "=== $(/bin/date) — delegating to Terminal ===" >> "$LOG"
 
-# GUI-launched apps inherit only /usr/bin:/bin — add the common tool locations
-# so swiftc / brew / ollama are found the same as in a real shell.
-export PATH="/opt/homebrew/bin:/usr/local/bin:$HOME/.local/bin:$PATH"
+# Ensure the standard tool locations are present (Finder gives a bare PATH).
+export PATH="/usr/bin:/bin:/usr/sbin:/sbin:$PATH"
 
-# Pick a python3 that actually has Tkinter — the setup window (and the GUI's
-# customtkinter) need it. Homebrew's python often ships WITHOUT _tkinter, so it
-# is tried last; python.org / system builds include it.
-PY=""
-for cand in \
-    /usr/local/bin/python3 \
-    /Library/Frameworks/Python.framework/Versions/*/bin/python3 \
-    /usr/bin/python3 \
-    python3 \
-    /opt/homebrew/bin/python3; do
-    command -v "$cand" >/dev/null 2>&1 || continue
-    if "$cand" -c 'import tkinter' >/dev/null 2>&1; then PY="$cand"; break; fi
-done
+HERE="$(cd "$(dirname "$0")" && pwd)"     # .../Meeting STT.app/Contents/MacOS
+ROOT="$(cd "$HERE/../../.." && pwd)"      # the folder that holds the .app
+CMD="$ROOT/STT.command"
+echo "ROOT=$ROOT" >> "$LOG"
+echo "delegating: open $CMD" >> "$LOG"
 
-if [ -z "$PY" ]; then
-    osascript -e 'display alert "No Python with Tk found" message "Install Python 3 from https://www.python.org/downloads/ (it includes Tkinter), then open Meeting STT again. If you use Homebrew Python, run: brew install python-tk"'
-    exit 1
+if [ ! -e "$CMD" ]; then
+    # We may not be able to stat it under TCC; try open anyway, but note it.
+    echo "note: STT.command not visible from here (TCC); attempting open regardless" >> "$LOG"
 fi
 
-exec "$PY" "$ROOT/setup_app.py"
+exec /usr/bin/open "$CMD"

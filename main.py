@@ -13,11 +13,20 @@ warnings.filterwarnings("ignore", message="pkg_resources is deprecated")
 import queue
 import sys
 import threading
+import time
+from datetime import datetime
 
 import config
 from audio_capture import MultiCapture, list_input_devices
+from audio_writer import AudioWriter
 from vad_buffer import VADBuffer
 from writer import Writer
+
+# How long a source is given to deliver its first audio before silence stops being an innocent
+# explanation. The ScreenCaptureKit sidecar emits blocks continuously (silence included) as soon
+# as it is up, so ~10s is far more than it needs and short enough to catch the problem while the
+# meeting is still worth fixing.
+HEALTH_GRACE_SEC = 10.0
 
 # Transcriber is heavy (model load) -> imported lazily inside run() so that
 # importing this module (e.g. from gui.py) stays cheap.
@@ -40,6 +49,7 @@ class STTEngine:
         self.on_status = on_status or (lambda msg: None)
         self.echo = echo
         self.writer = None
+        self.audio_writer = None
         self.capture = None
         self.running = False
         self._pending_model = None   # model swap request while running (string)
@@ -61,9 +71,15 @@ class STTEngine:
             from transcriber import Transcriber  # lazy import (heavy)
             stt = Transcriber()
 
+            # Single timestamp shared by the transcript and the audio files, so a Stop/Start
+            # resume (same session_started) appends to both and their filenames line up.
+            started_at = session_started or datetime.now()
             self.writer = Writer(on_line=self.on_line, echo=self.echo,
-                                 started_at=session_started)
-            self.capture = MultiCapture(config.SOURCES)
+                                 started_at=started_at)
+            if config.SAVE_AUDIO:
+                self.audio_writer = AudioWriter(started_at=started_at)
+                self.audio_writer.start()
+            self.capture = MultiCapture(config.SOURCES, audio_writer=self.audio_writer)
             self.capture.start()
 
             vads = {sp: VADBuffer() for sp in self.capture.speakers()}
@@ -71,6 +87,8 @@ class STTEngine:
             current_model = model_size
             self._pending_model = None
             self.on_status(f"Transcribing · {who} · {current_model}")
+            capture_started = time.monotonic()
+            health_reported = set()
 
             # Background model loader: keep transcribing with the old model until the new one is ready,
             # then swap the moment it finishes loading (no interruption).
@@ -106,6 +124,16 @@ class STTEngine:
                     loader = {"thread": None, "model": None,
                               "stt": None, "error": None}
 
+                # 3) Capture watchdog. The system-audio sidecar is a child process: it can die,
+                # or never start delivering, while the mic keeps working -- and then every line
+                # comes out tagged with the mic's speaker and nothing says why. Surface it.
+                if time.monotonic() - capture_started > HEALTH_GRACE_SEC:
+                    for msg in self.capture.health():
+                        if msg not in health_reported:
+                            health_reported.add(msg)
+                            print(f"[audio] {msg}", file=sys.stderr, flush=True)
+                            self.on_status("\u26a0 " + msg.splitlines()[0])
+
                 try:
                     speaker, block = self.capture.audio_queue.get(timeout=0.5)
                 except queue.Empty:
@@ -128,12 +156,19 @@ class STTEngine:
                 self.capture = None
             if self.writer is not None:
                 self.writer.close()
+            if self.audio_writer is not None:
+                self.audio_writer.close()
             self.running = False
             self.on_status("Stopped")
 
     def save(self):
         """Return the transcript file path (already saved live). None if nothing captured."""
         return self.writer.save_txt() if self.writer is not None else None
+
+    def audio_paths(self):
+        """Return {speaker: wav_path} for the raw audio saved this session.
+        Empty dict if config.SAVE_AUDIO is off or nothing has been captured yet."""
+        return self.audio_writer.paths() if self.audio_writer is not None else {}
 
 
 def main():
